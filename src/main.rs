@@ -64,7 +64,7 @@ fn efi_main(handle: Handle, st: SystemTable<Boot>) -> Status {
     memmap_file.write(header).unwrap_success();
 
     for (i, d) in descriptor_iter.enumerate() {
-        let tmp = format!("{}, {}, {:?}, {}, {}, {}\n", i, d.ty.0, d.ty, d.phys_start, d.page_count, d.att.bits());
+        let tmp = format!("{}, {:x}, {:?}, {:>08x}, {:x}, {:x}\n", i, d.ty.0, d.ty, d.phys_start, d.page_count, d.att.bits());
         let buf = tmp.as_bytes();
         memmap_file.write(buf).unwrap_success();
     }
