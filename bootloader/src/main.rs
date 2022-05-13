@@ -77,7 +77,7 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
             f
         };
 
-        let mut b = vec![0u8; st.boot_services().memory_map_size().map_size * 2];
+        let mut b = vec![0u8; st.boot_services().memory_map_size().map_size + 2048].into_boxed_slice();
         st.exit_boot_services(handle, &mut b[..]).unwrap();
 
         kernel_entry();

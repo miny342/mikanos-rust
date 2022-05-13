@@ -1,6 +1,6 @@
 #!/bin/sh
 
-./bootloader/build.sh $1
+./bootloader/build.sh
 if [ "$#" -gt 0 ]
 then
     ./kernel/build.sh $1
