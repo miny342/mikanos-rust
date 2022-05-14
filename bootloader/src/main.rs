@@ -3,7 +3,9 @@
 #![feature(abi_efiapi)]
 
 use uefi::CStr16;
+use uefi::Identify;
 use uefi::prelude::*;
+use uefi::proto::console::gop::GraphicsOutput;
 use uefi::table::boot::AllocateType;
 use uefi::table::boot::MemoryType;
 use uefi::proto::media::file::Directory;
@@ -12,6 +14,9 @@ use uefi::proto::media::file::FileAttribute;
 use uefi::proto::media::file::FileMode;
 use uefi::proto::media::file::FileInfo;
 use uefi::proto::media::file::FileType::Regular;
+use uefi::table::boot::{
+    SearchType, OpenProtocolParams, OpenProtocolAttributes
+};
 
 use core::fmt::Write;
 
@@ -47,6 +52,31 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         }
 
         memmap_file.close();
+    }
+
+    // https://stackoverflow.com/questions/57487924/what-is-the-correct-way-to-load-a-uefi-protocol
+    {
+        // st immutable borrowed...
+        let framehandlebuffer = st.boot_services().locate_handle_buffer(SearchType::ByProtocol(&GraphicsOutput::GUID)).unwrap();
+        let gophandle = framehandlebuffer.handles()[0];
+
+        let gop_ptr = st.boot_services().open_protocol::<GraphicsOutput>(
+            OpenProtocolParams {
+                handle: gophandle,
+                agent: handle,
+                controller: None
+            },
+            OpenProtocolAttributes::Exclusive
+        ).unwrap().interface.get();
+        let gop = unsafe {
+            &mut *gop_ptr
+        };
+        let mut framebuffer = gop.frame_buffer();
+        for i in 0..framebuffer.size() {
+            unsafe {
+                framebuffer.write_byte(i, 255);
+            }
+        }
     }
 
     let name = CStr16::from_str_with_buf("\\kernel", &mut str_buf).unwrap();
