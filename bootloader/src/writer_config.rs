@@ -1,4 +1,3 @@
-#[derive(Clone, Copy)]
 pub enum PixelFormat {
     Rgb,
     Bgr,
@@ -6,7 +5,6 @@ pub enum PixelFormat {
     BltOnly,
 }
 
-#[derive(Clone, Copy)]
 pub struct FrameBufferConfig {
     pub frame_buffer: *mut u8,
     pub pixels_per_scan_line: usize,

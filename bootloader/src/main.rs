@@ -21,7 +21,9 @@ use uefi::table::boot::{
 use core::arch::asm;
 use core::fmt::Write;
 
-use commons::writer::*;
+pub mod writer_config;
+
+use writer_config::*;
 
 #[macro_use]
 extern crate alloc;
