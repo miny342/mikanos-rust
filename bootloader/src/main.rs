@@ -18,6 +18,7 @@ use uefi::table::boot::{
     SearchType, OpenProtocolParams, OpenProtocolAttributes
 };
 
+use core::arch::asm;
 use core::fmt::Write;
 
 #[macro_use]
@@ -55,7 +56,7 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
     }
 
     // https://stackoverflow.com/questions/57487924/what-is-the-correct-way-to-load-a-uefi-protocol
-    {
+    let (frame_ptr, frame_cnt) = {
         // st immutable borrowed...
         let framehandlebuffer = st.boot_services().locate_handle_buffer(SearchType::ByProtocol(&GraphicsOutput::GUID)).unwrap();
         let gophandle = framehandlebuffer.handles()[0];
@@ -72,12 +73,13 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
             &mut *gop_ptr
         };
         let mut framebuffer = gop.frame_buffer();
-        for i in 0..framebuffer.size() {
-            unsafe {
-                framebuffer.write_byte(i, 255);
-            }
-        }
-    }
+        // for i in 0..framebuffer.size() {
+        //     unsafe {
+        //         framebuffer.write_byte(i, 255);
+        //     }
+        // }
+        (framebuffer.as_mut_ptr(), framebuffer.size())
+    };
 
     let name = CStr16::from_str_with_buf("\\kernel", &mut str_buf).unwrap();
     let kernel_file = root_dir.open(name, FileMode::Read, FileAttribute::READ_ONLY).unwrap().into_type().unwrap();
@@ -103,16 +105,20 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         writeln!(st.stdout(), "entry point: {:x}", entry_point).unwrap();
 
         let kernel_entry = unsafe {
-            let f: extern "efiapi" fn() -> ! = core::mem::transmute(entry_point);
+            let f: extern "efiapi" fn(*mut u8, usize) -> ! = core::mem::transmute(entry_point);
             f
         };
 
         let mut b = vec![0u8; st.boot_services().memory_map_size().map_size + 2048].into_boxed_slice();
         st.exit_boot_services(handle, &mut b[..]).unwrap();
 
-        kernel_entry();
+        kernel_entry(frame_ptr, frame_cnt);
     }
     writeln!(st.stdout(), "kernel load error").unwrap();
-    loop {}
+    loop {
+        unsafe {
+            asm!("hlt");
+        }
+    }
 }
 
