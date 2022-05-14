@@ -18,8 +18,12 @@ use uefi::table::boot::{
     SearchType, OpenProtocolParams, OpenProtocolAttributes
 };
 
+use elf_rs::Elf;
+use elf_rs::ProgramType;
+
 use core::arch::asm;
 use core::fmt::Write;
+use core::ops::Deref;
 
 pub mod writer_config;
 
@@ -104,16 +108,50 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
 
         let kernel_file_size: usize = kernel_file_info.file_size() as usize;
 
-        let kernel_base_addr = 0x100000;
+        let kernel_buffer = st.boot_services().allocate_pool(MemoryType::LOADER_DATA, kernel_file_size).unwrap();
+        let kernel_buffer_slice = unsafe { core::slice::from_raw_parts_mut(kernel_buffer, kernel_file_size) };
+        kernel_file.read(kernel_buffer_slice).unwrap();
+        let elf = Elf::from_bytes(kernel_buffer_slice).unwrap();
+        let elf64 = match elf {
+            Elf::Elf64(elf) => elf,
+            _ => panic!()
+        };
+        let (first, last) = {
+            let mut first = usize::MAX;
+            let mut last = 0 as usize;
+            for hw in elf64.program_header_iter() {
+                let h = hw.deref();
+                match h.ph_type() {
+                    ProgramType::LOAD => {
+                        first = usize::min(first, h.vaddr() as usize);
+                        last = usize::max(last, (h.vaddr() + h.memsz()) as usize);
+                    },
+                    _ => {}
+                }
+            }
+            (first, last)
+        };
+
         let kernel_ptr = st.boot_services().allocate_pages(
-            AllocateType::Address(kernel_base_addr),
+            AllocateType::Address(first),
             MemoryType::LOADER_DATA,
-            (kernel_file_size + 0xfff) / 0x1000
+            (last - first + 0xfff) / 0x1000
         ).unwrap();
 
-        let page_buf = unsafe { core::slice::from_raw_parts_mut(kernel_ptr as *mut u8, kernel_file_size) };
-        kernel_file.read(page_buf).unwrap();
-        writeln!(st.stdout(), "Kernel: 0x{:x} ({} bytes)", kernel_base_addr, kernel_file_size).unwrap();
+        for hw in elf64.program_header_iter() {
+            let h = hw.deref();
+            match h.ph_type() {
+                ProgramType::LOAD => unsafe {
+                    let segm_in_file = kernel_buffer.add(h.offset() as usize) as *mut u8;
+                    st.boot_services().memmove(h.vaddr() as *mut u8, segm_in_file, h.filesz() as usize);
+                    let remain_bytes = (h.memsz() - h.filesz()) as usize;
+                    st.boot_services().set_mem((h.vaddr() + h.filesz()) as *mut u8, remain_bytes, 0);
+                },
+                _ => {}
+            }
+        }
+
+        st.boot_services().free_pool(kernel_buffer).unwrap();
 
         let entry_point_address = kernel_ptr + 24;
         let entry_point = unsafe { *(entry_point_address as *const u64) };

@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 uefi = {version = "0.15.2", features = ["alloc", "exts"]}
 uefi-services = "0.12.1"
+elf_rs = "0.2.0"
