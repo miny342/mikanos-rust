@@ -21,6 +21,8 @@ use uefi::table::boot::{
 use core::arch::asm;
 use core::fmt::Write;
 
+use commons::writer::*;
+
 #[macro_use]
 extern crate alloc;
 
@@ -56,7 +58,8 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
     }
 
     // https://stackoverflow.com/questions/57487924/what-is-the-correct-way-to-load-a-uefi-protocol
-    let (frame_ptr, frame_cnt) = {
+
+    let gop = {
         // st immutable borrowed...
         let framehandlebuffer = st.boot_services().locate_handle_buffer(SearchType::ByProtocol(&GraphicsOutput::GUID)).unwrap();
         let gophandle = framehandlebuffer.handles()[0];
@@ -69,16 +72,26 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
             },
             OpenProtocolAttributes::Exclusive
         ).unwrap().interface.get();
-        let gop = unsafe {
-            &mut *gop_ptr
-        };
-        let mut framebuffer = gop.frame_buffer();
-        // for i in 0..framebuffer.size() {
-        //     unsafe {
-        //         framebuffer.write_byte(i, 255);
-        //     }
-        // }
-        (framebuffer.as_mut_ptr(), framebuffer.size())
+        unsafe { &mut *gop_ptr }
+    };
+
+    let mode = gop.current_mode_info();
+
+    let config = FrameBufferConfig {
+        frame_buffer: gop.frame_buffer().as_mut_ptr(),
+        pixels_per_scan_line: mode.stride(),
+        horizontal_resolution: mode.resolution().0,
+        vertical_resolution: mode.resolution().1,
+        pixel_format: {
+            let n = mode.pixel_format() as usize;
+            match n {
+                0 => Some(PixelFormat::Rgb),
+                1 => Some(PixelFormat::Bgr),
+                // 2 => Some(PixelFormat::Bitmask),
+                // 3 => Some(PixelFormat::BltOnly),
+                _ => None
+            }.unwrap()
+        },
     };
 
     let name = CStr16::from_str_with_buf("\\kernel", &mut str_buf).unwrap();
@@ -105,14 +118,14 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         writeln!(st.stdout(), "entry point: {:x}", entry_point).unwrap();
 
         let kernel_entry = unsafe {
-            let f: extern "efiapi" fn(*mut u8, usize) -> ! = core::mem::transmute(entry_point);
+            let f: extern "efiapi" fn(*const FrameBufferConfig) -> ! = core::mem::transmute(entry_point);
             f
         };
 
         let mut b = vec![0u8; st.boot_services().memory_map_size().map_size + 2048].into_boxed_slice();
         st.exit_boot_services(handle, &mut b[..]).unwrap();
 
-        kernel_entry(frame_ptr, frame_cnt);
+        kernel_entry(&config);
     }
     writeln!(st.stdout(), "kernel load error").unwrap();
     loop {
