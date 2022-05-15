@@ -1,5 +1,7 @@
+use core::mem::MaybeUninit;
+
 #[allow(dead_code)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum PixelFormat {
     Rgb,
     Bgr,
@@ -7,7 +9,7 @@ pub enum PixelFormat {
     BltOnly,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct FrameBufferConfig {
     pub frame_buffer: *mut u8,
     pub pixels_per_scan_line: usize,
@@ -39,10 +41,14 @@ unsafe fn write_bgr(pos: *mut u8, c: &PixelColor) {
     *(pos.add(2)) = c.r;
 }
 
+#[derive(Clone, Copy)]
 pub struct PixelWriter {
     pub config: FrameBufferConfig,
     write_: unsafe fn(pos: *mut u8, c: &PixelColor),
 }
+
+static mut WRITER: MaybeUninit<PixelWriter> = MaybeUninit::<PixelWriter>::uninit();
+static mut INITIALIZED: bool = false;
 
 impl PixelWriter {
     pub fn new(config: FrameBufferConfig) -> Self {
@@ -55,6 +61,21 @@ impl PixelWriter {
             config,
             write_: f
         }
+    }
+
+    pub fn get() -> Option<Self> {
+        unsafe {
+            if INITIALIZED {
+                Some(WRITER.assume_init())
+            } else {
+                None
+            }
+        }
+    }
+
+    pub unsafe fn init(config: FrameBufferConfig) {
+        WRITER.write(PixelWriter::new(config));
+        INITIALIZED = true;
     }
 
     pub fn write(&self, x: usize, y: usize, c: &PixelColor) {

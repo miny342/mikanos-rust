@@ -2,6 +2,7 @@
 #![no_main]
 
 #![feature(abi_efiapi)]
+#![feature(once_cell)]
 
 mod graphics;
 mod font;
@@ -14,7 +15,8 @@ use crate::graphics::*;
 use crate::font::*;
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
+    println!(0, 0, "{}", info);
     loop {
         unsafe {
             asm!("hlt");
@@ -24,7 +26,9 @@ fn panic(_info: &PanicInfo) -> ! {
 
 #[no_mangle]
 extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
-    let writer = PixelWriter::new(unsafe {*config});
+    unsafe { PixelWriter::init(*config) };
+    let writer = PixelWriter::get().unwrap();
+
     for x in 0..writer.config.horizontal_resolution {
         for y in 0..writer.config.vertical_resolution {
             writer.write(x, y, &PixelColor { r: 255, g: 255, b: 255 });
@@ -36,10 +40,7 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
         }
     }
 
-    let color = PixelColor { r: 0, g: 0, b: 0};
-    for i in ('!' as u8)..=('~' as u8) {
-        write_ascii(&writer, 8 * (i - '!' as u8) as usize, 50, i as char, &color);
-    }
+    println!(100, 100, "hello kernel!!!\n    by {}", "println");
 
     loop {
         unsafe {
