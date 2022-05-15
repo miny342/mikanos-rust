@@ -18,6 +18,7 @@ pub struct FrameBufferConfig {
     pub pixel_format: PixelFormat,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct PixelColor {
     pub r: u8,
     pub g: u8,
@@ -63,12 +64,12 @@ impl PixelWriter {
         }
     }
 
-    pub fn get() -> Option<Self> {
+    pub fn get() -> Result<Self, &'static str> {
         unsafe {
             if INITIALIZED {
-                Some(WRITER.assume_init())
+                Ok(WRITER.assume_init())
             } else {
-                None
+                Err("pixel writer is not initialized")
             }
         }
     }

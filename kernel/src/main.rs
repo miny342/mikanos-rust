@@ -7,16 +7,18 @@
 mod graphics;
 mod font;
 mod ascii;
+mod console;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
 
 use crate::graphics::*;
-use crate::font::*;
+use crate::console::*;
+
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    println!(0, 0, "{}", info);
+    println!("{}", info);
     loop {
         unsafe {
             asm!("hlt");
@@ -26,7 +28,10 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[no_mangle]
 extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
-    unsafe { PixelWriter::init(*config) };
+    unsafe {
+        PixelWriter::init(*config);
+        Console::init(PixelColor { r: 0, g: 0, b: 0}, PixelColor { r: 255, g: 255, b: 255 })
+    };
     let writer = PixelWriter::get().unwrap();
 
     for x in 0..writer.config.horizontal_resolution {
@@ -40,7 +45,14 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
         }
     }
 
-    println!(100, 100, "hello kernel!!!\n    by {}", "println");
+    for i in 0..30 {
+        println!("println! {}", i);
+    }
+    for i in 0..30 {
+        print!("print! {}", i);
+    }
+    println!("");
+    panic!("test panic");
 
     loop {
         unsafe {
