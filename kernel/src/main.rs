@@ -3,49 +3,20 @@
 
 #![feature(abi_efiapi)]
 
+mod graphics;
+mod font;
+
 use core::arch::asm;
 use core::panic::PanicInfo;
 
-pub mod writer;
-use writer::*;
+use crate::graphics::*;
+use crate::font::*;
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop {
         unsafe {
             asm!("hlt");
-        }
-    }
-}
-
-const kFontA: [u8; 16] = [
-    0b00000000, //
-    0b00011000, //    **
-    0b00011000, //    **
-    0b00011000, //    **
-    0b00011000, //    **
-    0b00100100, //   *  *
-    0b00100100, //   *  *
-    0b00100100, //   *  *
-    0b00100100, //   *  *
-    0b01111110, //  ******
-    0b01000010, //  *    *
-    0b01000010, //  *    *
-    0b01000010, //  *    *
-    0b11100111, // ***  ***
-    0b00000000, //
-    0b00000000, //
-];
-
-fn write_ascii(writer: &PixelWriter, x: usize, y: usize, c: char, color: &PixelColor) {
-    if c != 'A' {
-        return
-    }
-    for dy in 0..16 {
-        for dx in 0..8 {
-            if (kFontA[dy] << dx) & 0x80 != 0 {
-                writer.write(x + dx, y + dy, color);
-            }
         }
     }
 }
