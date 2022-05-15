@@ -5,6 +5,7 @@
 
 mod graphics;
 mod font;
+mod ascii;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -36,8 +37,9 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
     }
 
     let color = PixelColor { r: 0, g: 0, b: 0};
-    write_ascii(&writer, 50, 50, 'A', &color);
-    write_ascii(&writer, 58, 50, 'A', &color);
+    for i in ('!' as u8)..=('~' as u8) {
+        write_ascii(&writer, 8 * (i - '!' as u8) as usize, 50, i as char, &color);
+    }
 
     loop {
         unsafe {
