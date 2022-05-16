@@ -1,18 +1,16 @@
+#[derive(Debug, Clone, Copy)]
 pub enum Error {
     Full,
     Empty,
     LastOfCode
 }
 
-impl Error {
-    fn cast_usize(&self) -> usize {
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
-            &Error::Full => 0,
-            &Error::Empty => 1,
-            _ => panic!("LastOfCode")
+            // なぜかわからないが、元のコードでLastOfCodeはindex out of rangeなので一応
+            &Error::LastOfCode => panic!("print Last of code!"),
+            _ => write!(f, "{:?}", self)
         }
-    }
-    pub fn name(&self) -> &'static str {
-        ["Full", "Empty"][self.cast_usize()]
     }
 }

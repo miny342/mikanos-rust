@@ -48,11 +48,11 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
     }
 
     let res = pci::scan_all_bus();
-    let s = match res {
-        Ok(_) => "Success",
-        Err(e) => e.name(),
+    print!("scan all bus: ");
+    match res {
+        Ok(_) => println!("Success"),
+        Err(e) => println!("{}", e),
     };
-    println!("scan all bus: {}", s);
 
     unsafe {
         for dev in pci::DEVICES.iter() {
