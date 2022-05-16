@@ -1,5 +1,6 @@
 use core::mem::MaybeUninit;
 
+#[repr(C)]
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum PixelFormat {
@@ -9,6 +10,7 @@ pub enum PixelFormat {
     BltOnly,
 }
 
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FrameBufferConfig {
     pub frame_buffer: *mut u8,

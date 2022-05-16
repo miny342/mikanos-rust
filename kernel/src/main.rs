@@ -8,6 +8,8 @@ mod graphics;
 mod font;
 mod ascii;
 mod console;
+mod pci;
+mod error;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -45,14 +47,23 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
         }
     }
 
-    for i in 0..30 {
-        println!("println! {}", i);
+    let res = pci::scan_all_bus();
+    let s = match res {
+        Ok(_) => "Success",
+        Err(e) => e.name(),
+    };
+    println!("scan all bus: {}", s);
+
+    unsafe {
+        for dev in pci::DEVICES.iter() {
+            let vendor_id = pci::read_vendor_id(dev.bus, dev.device, dev.func);
+            let class_code = pci::read_class_code(dev.bus, dev.device, dev.func);
+            println!("{}.{}.{}: vend {:>4x}, class {:>8x}, head {:>2x}",
+                dev.bus, dev.device, dev.func,
+                vendor_id, class_code, dev.header_type
+            );
+        }
     }
-    for i in 0..30 {
-        print!("print! {}", i);
-    }
-    println!("");
-    panic!("test panic");
 
     loop {
         unsafe {

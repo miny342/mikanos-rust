@@ -1,3 +1,4 @@
+#[repr(C)]
 pub enum PixelFormat {
     Rgb,
     Bgr,
@@ -5,6 +6,7 @@ pub enum PixelFormat {
     BltOnly,
 }
 
+#[repr(C)]
 pub struct FrameBufferConfig {
     pub frame_buffer: *mut u8,
     pub pixels_per_scan_line: usize,
