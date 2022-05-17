@@ -49,7 +49,7 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
         }
     }
     println!("hello");
-    unsafe {set_log_level(LogLevel::Warn)}
+    unsafe {set_log_level(LogLevel::Debug)}
 
     let res = pci::scan_all_bus();
     match res {
@@ -61,11 +61,30 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
     for dev in unsafe { pci::DEVICES.iter() } {
         let vendor_id = unsafe { pci::read_vendor_id(dev.bus, dev.device, dev.func) };
         let class_code = unsafe { pci::read_class_code(dev.bus, dev.device, dev.func) };
-        debug!("{}.{}.{}: vend {:>4x}, class {:>8x}, head {:>2x}",
+        debug!("{}.{}.{}: vend {:>4x}, class {:?}, head {:>2x}",
             dev.bus, dev.device, dev.func,
             vendor_id, class_code, dev.header_type
         );
     }
+
+    let mut dev: Option<&pci::Device> = None;
+    unsafe {
+        for d in pci::DEVICES.iter().filter(|d| d.class_code.match3(0x0c, 0x03, 0x30)) {
+            dev = Some(d);
+            if (pci::read_vendor_id(d.bus, d.device, d.func)) == 0x8086 {
+                break;
+            }
+        }
+    };
+
+    let xhc_dev = dev.expect("not found: xHC");
+
+    info!("xHC has been found: {}.{}.{}", xhc_dev.bus, xhc_dev.device, xhc_dev.func);
+
+    let xhc_bar = unsafe {pci::read_bar(xhc_dev, 0)}.unwrap();
+    debug!("read bar: Success");
+    let xhc_mmio_base = xhc_bar & 0xf;
+    debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
 
     loop {
         unsafe {

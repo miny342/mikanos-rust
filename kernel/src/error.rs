@@ -33,6 +33,7 @@ pub enum Code {
     LastOfCode
 }
 
+#[derive(Debug)]
 pub struct Error {
     pub code: Code,
     pub line: u32,
