@@ -1,6 +1,7 @@
 use core::arch::asm;
 use heapless::Vec;
 use crate::error::*;
+use crate::make_error;
 
 const CONFIG_ADDR: u16 = 0x0cf8;
 const CONFIG_DATA: u16 = 0x0cfc;
@@ -30,7 +31,7 @@ unsafe fn add_device(bus: u8, device: u8, func: u8, header_type: u8) -> Result<(
     let res = DEVICES.push(Device {bus, device, func, header_type});
     match res {
         Ok(_) => Ok(()),
-        Err(_) => Err(Error::Full),
+        Err(_) => Err(make_error!(Code::Full)),
     }
 }
 
