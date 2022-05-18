@@ -11,6 +11,7 @@ mod console;
 mod pci;
 mod error;
 mod logger;
+mod usb;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -18,6 +19,7 @@ use core::panic::PanicInfo;
 use crate::graphics::*;
 use crate::console::*;
 use crate::logger::*;
+use crate::usb::driver_handle_test;
 
 
 #[panic_handler]
@@ -83,8 +85,10 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
 
     let xhc_bar = unsafe {pci::read_bar(xhc_dev, 0)}.unwrap();
     debug!("read bar: Success");
-    let xhc_mmio_base = xhc_bar & 0xf;
+    let xhc_mmio_base = xhc_bar & !0xf;
     debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
+
+    unsafe { driver_handle_test(xhc_mmio_base); }
 
     loop {
         unsafe {
