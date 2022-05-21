@@ -1,15 +1,139 @@
+use core::intrinsics::transmute;
 use core::slice::from_raw_parts_mut;
 
-use crate::{println, print};
+use crate::{println, print, debug, log, make_error, error};
 use crate::pci::{
     Device, read_config_reg
 };
 use crate::error::*;
 
+type HandleError<T> = Result<T, Error>;
+
+#[repr(C, packed)]
+struct UsbStatusRegister {
+    data: u32
+}
+
+impl UsbStatusRegister {
+    pub fn hchalted(&self) -> bool {
+        self.data & 0x1 != 0
+    }
+    pub fn controller_not_ready(&self) -> bool {
+        (self.data >> 11) & 0x1 != 0
+    }
+}
+
+#[repr(C, packed)]
+struct UsbCommandRegister {
+    data: u32
+}
+
+impl UsbCommandRegister {
+    pub fn run(&mut self) {
+        self.data = self.data | 0x1;
+    }
+    pub fn host_controller_reset(&self) -> bool {
+        (self.data >> 1) & 0x1 != 0
+    }
+    pub fn set_host_controller_reset(&mut self, value: bool) {
+        self.data = (self.data & !0x2) | ((value as u32) << 1);
+    }
+    pub fn set_interrupt_enable(&mut self, value: bool) {
+        self.data = (self.data & !0x4) | ((value as u32) << 2);
+    }
+}
+
+#[repr(C, packed)]
+struct ConfigureRegister {
+    data: u32
+}
+
+impl ConfigureRegister {
+    pub fn set_max_slots_en(&mut self, value: u8) {
+        self.data = (self.data & !0xff) | (value as u32)
+    }
+}
+
+#[repr(C, packed)]
+struct DeviceContextBaseAddressArrayPointerRegister {
+    data: u64
+}
+
+impl DeviceContextBaseAddressArrayPointerRegister {
+    pub fn set_dcbaap(&mut self, value: u64) {
+        assert!(value & 0x3f == 0);
+        self.data = value;
+    }
+}
+
+#[repr(C, packed)]
+struct CommandRingControlRegister {
+    data: u64
+}
+
+impl CommandRingControlRegister {
+    pub fn set_ring_cycle_state(&mut self, value: bool) {
+        self.data = (self.data & !0x1) | (value as u64)
+    }
+    pub fn set_pointer(&mut self, value: u64) {
+        assert!(value & 0x3f == 0);
+        self.data = (self.data & 0x3f) | value;
+    }
+}
+
+#[repr(C, packed)]
+struct HostControllerRuntimeRegister {
+    data: u32
+}
+
+impl HostControllerRuntimeRegister {
+    pub unsafe fn interrupt_set(&self) -> &mut [InterruptRegister] {
+        from_raw_parts_mut(((self as *const HostControllerRuntimeRegister as u64) + 0x20) as *mut InterruptRegister, 1024)
+    }
+}
+
+#[repr(C, packed)]
+struct PortStatusAndControlRegister {
+    data: u32
+}
+
+impl PortStatusAndControlRegister {
+    pub fn is_connected(&self) -> bool {
+        self.data & 0x1 != 0
+    }
+    pub fn is_enabled(&self) -> bool {
+        self.data & 0x2 != 0
+    }
+    pub fn reset(&mut self) {
+        let val = self.data & 0x0e00c3e0;
+        self.data = val | 0x00020010;
+        while !self.is_enabled() {}
+    }
+    pub fn is_port_reset_changed(&self) -> bool {
+        self.data & 0x200000 != 0
+    }
+    pub fn clear_is_port_reset_changed(&mut self) {
+        let v = self.data & 0x0e01c3e0;
+        self.data = v | 0x200000;
+    }
+}
+
+#[repr(C, packed)]
+struct DoorbellRegister {
+    data: u32
+}
+
+impl DoorbellRegister {
+    pub fn ring(&mut self, target: u8, stream_id: u16) {
+        self.data = (target as u32) | ((stream_id as u32) << 16)
+    }
+}
+
+
 #[repr(C, packed)]
 struct CapabilityRegisters {
     length: u8,
-    reserved: u8,
+    rsvdz1: u8,
     hci_version: u16,
     hcs_params1: u32,
     hcs_params2: u32,
@@ -18,6 +142,45 @@ struct CapabilityRegisters {
     doorbell_offset: u32,
     runtime_reg_offset: u32,
     hcc_params2: u32,
+}
+
+impl CapabilityRegisters {
+    fn op_base(&self) -> u64 {
+        self as *const CapabilityRegisters as u64 + self.length as u64
+    }
+    pub fn usb_status(&self) -> &mut UsbStatusRegister {
+        unsafe { &mut *((self.op_base() + 0x04) as *mut UsbStatusRegister) }
+    }
+    pub fn usb_command(&self) -> &mut UsbCommandRegister {
+        unsafe { &mut *(self.op_base() as *mut UsbCommandRegister) }
+    }
+    pub fn max_slots(&self) -> u8 {
+        (self.hcs_params1 & 0xff) as u8
+    }
+    pub fn max_ports(&self) -> u8 {
+        (self.hcs_params1 >> 24) as u8
+    }
+    pub fn pagesize(&self) -> u32 {
+        unsafe { *((self.op_base() + 0x8) as *const u32) }
+    }
+    pub fn configure(&self) -> &mut ConfigureRegister {
+        unsafe { &mut *((self.op_base() + 0x38) as *mut ConfigureRegister) }
+    }
+    pub fn dcbaap(&self) -> &mut DeviceContextBaseAddressArrayPointerRegister {
+        unsafe { &mut *((self.op_base() + 0x30) as *mut DeviceContextBaseAddressArrayPointerRegister) }
+    }
+    pub fn crcr(&self) -> &mut CommandRingControlRegister {
+        unsafe { &mut *((self.op_base() + 0x18) as *mut CommandRingControlRegister) }
+    }
+    pub fn runtime(&self) -> &mut HostControllerRuntimeRegister {
+        unsafe { &mut *((self as *const CapabilityRegisters as u64 + self.runtime_reg_offset as u64) as *mut HostControllerRuntimeRegister) }
+    }
+    pub fn port_sc(&self, port: u8) -> &mut PortStatusAndControlRegister {
+        unsafe { &mut *((self.op_base() + 0x400 + 0x10 * (port as u64 - 1)) as *mut PortStatusAndControlRegister) }
+    }
+    pub fn doorbell(&self) -> &mut DoorbellRegister {
+        unsafe { &mut *((self as *const CapabilityRegisters as u64 + self.doorbell_offset as u64) as *mut DoorbellRegister) }
+    }
 }
 
 const max_slots_en: u8 = 8;
@@ -29,19 +192,123 @@ struct MemPool {
 
 static mut DCBAA: MemPool = MemPool { x: [0; max_slots_en as usize + 1] };
 
+trait TRBtrait {
+    const TY: u32;
+}
+
 #[derive(Clone, Copy)]
 #[repr(C, packed)]
 struct TRB {
     data: [u32; 4]
 }
 
-#[repr(align(64))]
-struct MemPoolTRB {
-    x: [TRB; 32]
+impl TRBtrait for TRB {
+    const TY: u32 = 0;
 }
 
-static mut CR_BUF: MemPoolTRB = MemPoolTRB { x: [TRB { data: [0; 4] }; 32] };
-static mut CR_CYCLE: bool = true;
+impl TRB {
+    pub fn ty(&self) -> u32 {
+        (self.data[3] >> 10) & 0x3f
+    }
+    pub fn cast<T: TRBtrait>(&self) -> Option<&T> {
+        if self.ty() == T::TY {
+            unsafe { Some(transmute::<&Self, &T>(self)) }
+        } else {
+            None
+        }
+    }
+    pub fn cycle(&self) -> bool {
+        self.data[3] & 0x1 != 0
+    }
+    pub fn new_enable_slot_trb() -> TRB {
+        TRB {
+            data: [
+                0, 0, 0, 9 << 10
+            ]
+        }
+    }
+    pub fn new_link_trb() -> TRB {
+        let ptr = unsafe { CR_BUF.x.as_ptr() as u64 };
+        TRB {
+            data: [
+                (ptr & 0xfffffff0) as u32, (ptr >> 32) as u32, 0, 6 << 10
+            ]
+        }
+    }
+}
+
+struct PortStatusChangeEventTRB {
+    data: [u32; 4]
+}
+
+impl TRBtrait for PortStatusChangeEventTRB {
+    const TY: u32 = 34;
+}
+
+impl PortStatusChangeEventTRB {
+    fn port_id(&self) -> u8 {
+        (self.data[0] >> 24) as u8
+    }
+    pub fn on_event(&self, xhc: &mut XhcController) {
+        let id = self.port_id();
+        let port = xhc.capability.port_sc(id);
+        match xhc.port_config_phase[id as usize] {
+            ConfigPhase::NotConnected => {
+                if port.is_connected() {
+                    unsafe {xhc.reset_port(id);}
+                }
+            },
+            ConfigPhase::ResettingPort => {
+                xhc.enable_slot(id);
+            },
+            _ => {
+                error!("{}", make_error!(Code::InvalidPhase));
+            }
+        }
+    }
+}
+
+struct CommandCompletionEventTRB {
+    data: [u32; 4]
+}
+
+impl TRBtrait for CommandCompletionEventTRB {
+    const TY: u32 = 33;
+}
+
+impl CommandCompletionEventTRB {
+
+}
+
+const TRB_BUF_LEN: usize = 32;
+
+#[repr(C, align(64))]
+struct MemPoolCrTRB {
+    x: [TRB; TRB_BUF_LEN],
+    index: usize,
+    cycle: bool
+}
+
+impl MemPoolCrTRB {
+    pub fn push(&mut self, mut trb: TRB) {
+        trb.data[3] = (trb.data[3] & !0x1) | (self.cycle as u32);
+        for i in 0..4 {
+            self.x[self.index].data[i] = trb.data[i]
+        }
+        self.index += 1;
+        if self.index == TRB_BUF_LEN - 1 {
+            let mut link = TRB::new_link_trb();
+            link.data[3] = link.data[3] | (self.cycle as u32);
+            for i in 0..4 {
+                self.x[self.index].data[i] = link.data[i];
+            }
+            self.index = 0;
+            self.cycle = !self.cycle;
+        }
+    }
+}
+
+static mut CR_BUF: MemPoolCrTRB = MemPoolCrTRB { x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true };
 
 #[repr(C, packed)]
 struct EventRingSegmentTableEntry {
@@ -58,8 +325,36 @@ struct MemPoolERSTE {
 
 static mut ERSTE_BUF: MemPoolERSTE = MemPoolERSTE { x: [EventRingSegmentTableEntry { addr: 0, size: 0, rsvdz1: 0, rsvdz2: 0 }; 1] };
 
-static mut ER_BUF: MemPoolTRB = MemPoolTRB { x: [TRB { data: [0; 4] }; 32] };
-static mut ER_CYCLE: bool = true;
+#[repr(C, align(64))]
+struct MemPoolErTRB {
+    x: [TRB; TRB_BUF_LEN],
+    index: usize,
+    cycle: bool,
+}
+
+impl MemPoolErTRB {
+    pub unsafe fn next(&mut self) -> Option<&TRB> {
+        let v = &self.x[self.index];
+        if v.cycle() == self.cycle {
+            if self.index == TRB_BUF_LEN - 1 {
+                self.index = 0;
+                self.cycle = !self.cycle;
+            } else {
+                self.index += 1;
+            }
+            Some(v)
+        } else {
+            None
+        }
+    }
+    pub unsafe fn clean(&self, xhc: &XhcController) {
+        let interrupt_reg = xhc.capability.runtime().interrupt_set();
+        let p = interrupt_reg[0].event_ring_dequeue_pointer & 0xf;
+        interrupt_reg[0].event_ring_dequeue_pointer = p | (&self.x[self.index] as *const TRB as u64);
+    }
+}
+
+static mut ER_BUF: MemPoolErTRB = MemPoolErTRB { x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true };
 
 #[repr(align(4096))]  // this is PAGESIZE = 1
 struct MemPoolDeviceCtx {
@@ -76,93 +371,159 @@ struct InterruptRegister {
     event_ring_dequeue_pointer: u64,
 }
 
+#[derive(Clone, Copy)]
+enum ConfigPhase {
+    NotConnected,
+    WaitingAddressed,
+    ResettingPort,
+    EnablingSlot,
+    AddressingDevice,
+    InitializingDevice,
+    ConfiguringEndpoints,
+    Configured,
+}
+
+struct XhcController {
+    capability: &'static CapabilityRegisters,
+    port_config_phase: [ConfigPhase; 256],
+    addressing_port: u8,
+}
+
+impl XhcController {
+    pub unsafe fn initialize(mmio_base: u64) -> XhcController {
+        let cap_reg = &*(mmio_base as *const CapabilityRegisters);
+        debug!("cap reg: {}", cap_reg.length);
+
+        let usbsts = cap_reg.usb_status(); // &*((op_base + 0x04) as *const u32);
+
+        assert!(usbsts.hchalted());  // assert USBSTS.HCH == 1
+
+        let usbcmd = cap_reg.usb_command();
+        usbcmd.set_host_controller_reset(true);  // USBCMD.HCRST = 1
+
+        while usbcmd.host_controller_reset() {}  // wait HCRST == 0
+
+        while usbsts.controller_not_ready() {}  // wait USBSTS.CNR == 0
+
+        debug!("USBSTS.CNR is 0! ready!");
+
+
+        let max_slots = cap_reg.max_slots();
+
+        debug!("max slots: {}", max_slots);
+        assert!(max_slots >= max_slots_en);
+
+        let config_reg = cap_reg.configure();
+        config_reg.set_max_slots_en(max_slots_en);
+
+        let dcbaap = cap_reg.dcbaap();
+        let ptr = DCBAA.x.as_ptr() as u64;
+        dcbaap.set_dcbaap(ptr);
+
+        let crcr = cap_reg.crcr();
+        let ptr = CR_BUF.x.as_ptr() as u64;
+        crcr.set_pointer(ptr);
+        crcr.set_ring_cycle_state(true);
+
+        let ptr = ER_BUF.x.as_ptr() as u64;
+        assert!(ptr & 0x3f == 0);
+        ERSTE_BUF.x[0].addr = ptr;
+        ERSTE_BUF.x[0].size = TRB_BUF_LEN as u16;
+
+        let runtime = cap_reg.runtime();
+        let interrupt_regs = runtime.interrupt_set();
+        interrupt_regs[0].event_ring_segment_table_size = 1;
+        interrupt_regs[0].event_ring_dequeue_pointer = ptr;
+        let ptr = ERSTE_BUF.x.as_ptr() as u64;
+        assert!(ptr & 0x3f == 0);
+        interrupt_regs[0].event_ring_segment_table_base_addr = ptr;
+        interrupt_regs[0].moderation = 4000;
+        interrupt_regs[0].management = 0x3;
+        usbcmd.set_interrupt_enable(true);
+        XhcController {
+            capability: cap_reg,
+            port_config_phase: [ConfigPhase::NotConnected; 256],
+            addressing_port: 0,
+        }
+    }
+    pub fn run(&self) {
+        unsafe {
+            let usbcmd = self.capability.usb_command();
+            usbcmd.run();
+            let usbsts = self.capability.usb_status();
+            while usbsts.hchalted() {}
+        }
+    }
+    pub fn configure_port(&mut self) {
+        unsafe {
+            let max_ports = self.capability.max_ports();
+            for n in 1..=max_ports {
+                let port = self.capability.port_sc(n);
+
+                if port.is_connected() {
+                    self.reset_port(n);
+                }
+            }
+        }
+    }
+    // safety: port must be connected
+    pub unsafe fn reset_port(&mut self, port_num: u8) {
+        if self.addressing_port != 0 {
+            self.port_config_phase[port_num as usize] = ConfigPhase::WaitingAddressed;
+            return;
+        }
+        let port = self.capability.port_sc(port_num);
+        match self.port_config_phase[port_num as usize] {
+            ConfigPhase::NotConnected | ConfigPhase::WaitingAddressed => {
+                self.addressing_port = port_num;
+                self.port_config_phase[port_num as usize] = ConfigPhase::ResettingPort;
+                port.reset();
+            },
+            _ => {}
+        }
+    }
+
+    pub fn enable_slot(&mut self, port_num: u8) {
+        let port = self.capability.port_sc(port_num);
+        if port.is_enabled() && port.is_port_reset_changed() {
+            port.clear_is_port_reset_changed();
+            self.port_config_phase[port_num as usize] = ConfigPhase::EnablingSlot;
+            unsafe {
+                CR_BUF.push(TRB::new_enable_slot_trb());
+            }
+            self.capability.doorbell().ring(0, 0);
+        }
+    }
+
+    pub fn process_event(&mut self) {
+        while let Some(trb) = unsafe { ER_BUF.next() } {
+            let v1 = trb.data[0];
+            let v2 = trb.data[1];
+            let v3 = trb.data[2];
+            let v4 = trb.data[3];
+            debug!("{:x} {:x} {:x} {:x}", v1, v2, v3, v4);
+            if let Some(casted) = trb.cast::<PortStatusChangeEventTRB>() {
+                casted.on_event(self)
+            }
+        }
+        unsafe { ER_BUF.clean(self) }
+    }
+}
+
+
 pub unsafe fn driver_handle_test(mmio_base: u64, device: &Device) {
-    let cap_reg = &*(mmio_base as *const CapabilityRegisters);
-    println!("cap reg: {}", cap_reg.length);
+    let mut xhci = XhcController::initialize(mmio_base);
+    xhci.run();
+    xhci.configure_port();
 
-    let op_base = mmio_base + cap_reg.length as u64;
+    xhci.process_event();
 
-    let usbsts = &*((op_base + 0x04) as *const u32);
-
-    assert!(usbsts & 0x1 == 1);  // assert USBSTS.HCH == 1
-
-    let usbcmd_addr = op_base as *mut u32;
-    *usbcmd_addr = *usbcmd_addr | 0x02;  // USBCMD.HCRST = 1
-
-    while *usbcmd_addr & 0x02 != 0 {}  // wait HCRST == 0
-
-    while usbsts & 0x800 != 0 {}  // wait USBSTS.CNR == 0
-
-    println!("USBSTS.CNR is 0! ready!");
-
-
-    let max_slots = (cap_reg.hcs_params1 & 0xff) as u8;
-
-    println!("max slots: {}", max_slots);
-    assert!(max_slots >= max_slots_en);
-
-    let config_reg_addr = (op_base + 0x38) as *mut u32;
-    *config_reg_addr = *config_reg_addr | max_slots_en as u32;
-
-    let dcbaap_addr = (op_base + 0x30) as *mut u64;
-    let ptr = DCBAA.x.as_ptr() as u64;
-    assert!(ptr & 0x3f == 0);
-    *dcbaap_addr = ptr;
-
-    let crcr_addr = (op_base + 0x18) as *mut u64;
-    let ptr = CR_BUF.x.as_ptr() as u64;
-    assert!(ptr & 0x3f == 0);
-    *crcr_addr = ptr | 0x1;
-
-    let ptr = ER_BUF.x.as_ptr() as u64;
-    assert!(ptr & 0x3f == 0);
-    ERSTE_BUF.x[0].addr = ptr;
-    ERSTE_BUF.x[0].size = 32;
-
-    let runtime_base = mmio_base + cap_reg.runtime_reg_offset as u64;
-    let interrupt_regs = from_raw_parts_mut((runtime_base + 0x20) as *mut InterruptRegister, 1024);
-    interrupt_regs[0].event_ring_segment_table_size = 1;
-    interrupt_regs[0].event_ring_dequeue_pointer = ptr;
-    let ptr = ERSTE_BUF.x.as_ptr() as u64;
-    assert!(ptr & 0x3f == 0);
-    interrupt_regs[0].event_ring_segment_table_base_addr = ptr;
-    interrupt_regs[0].moderation = 4000;
-    interrupt_regs[0].management = 0x3;
-    *usbcmd_addr = *usbcmd_addr | 0x4;
     // initialized
 
     // interrupt setting?
-
-    // xhc start
-    *usbcmd_addr = *usbcmd_addr | 0x1;
-    while usbsts & 0x1 == 1 {}
-
-    println!("xhc started");
-
-
     // let local_apic_id = *(0xfee00020 as *const u32) >> 24;
     // let msi_msg_addr = 0xfee00000 | (local_apic_id << 12);
     // let msi_msg_data = 0xc000u32 | 0x40;
-
-    let max_ports = (cap_reg.hcs_params1 >> 24) as u8;
-    for n in 0..max_ports {
-        let addr = (op_base + 0x400 + (0x10 * n as u64)) as *mut u32;
-        let connected = *addr & 0x1 == 0x1;  // ccs == 1
-
-        println!("port {}: {}", n + 1, connected);
-        if !connected {
-            continue;
-        }
-        let val = *addr & 0x0e00c3e0;
-        *addr = val | 0x20010;   // portsc.pr = 1 && portsc.csc = 1
-        while *addr & 0x10 != 0 {}
-    }
-
-    println!("device reset");
-
-    let addr = (op_base + 0x8) as *const u32;
-    println!("pagesize: {:b}", *addr);
-
 
     // let i = 0;
     // loop {
