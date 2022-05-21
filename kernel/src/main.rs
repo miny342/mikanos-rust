@@ -88,7 +88,7 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
     let xhc_mmio_base = xhc_bar & !0xf;
     debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
 
-    unsafe { driver_handle_test(xhc_mmio_base); }
+    unsafe { driver_handle_test(xhc_mmio_base, xhc_dev); }
 
     loop {
         unsafe {

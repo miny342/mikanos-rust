@@ -76,7 +76,7 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
                 agent: handle,
                 controller: None
             },
-            OpenProtocolAttributes::Exclusive
+            OpenProtocolAttributes::GetProtocol
         ).unwrap().interface.get();
         unsafe { &mut *gop_ptr }
     };
