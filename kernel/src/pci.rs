@@ -1,5 +1,6 @@
 use core::arch::asm;
 use heapless::Vec;
+use spin::Mutex;
 use crate::error::*;
 use crate::make_error;
 
@@ -33,7 +34,7 @@ impl ClassCode {
     }
 }
 
-pub static mut DEVICES: Vec<Device, 32> = Vec::new();
+pub static DEVICES: Mutex<Vec<Device, 32>> = Mutex::new(Vec::new());
 
 fn make_address(bus: u8, device: u8, func: u8, reg_addr: u8) -> u32 {
     let shl = |x: u32, bits: u32| {
@@ -46,8 +47,9 @@ fn make_address(bus: u8, device: u8, func: u8, reg_addr: u8) -> u32 {
         | (reg_addr as u32 & 0xfc);
 }
 
-unsafe fn add_device(bus: u8, device: u8, func: u8, header_type: u8, class_code: ClassCode) -> Result<(), Error> {
-    let res = DEVICES.push(Device {bus, device, func, header_type, class_code});
+fn add_device(bus: u8, device: u8, func: u8, header_type: u8, class_code: ClassCode) -> Result<(), Error> {
+    let mut dev = DEVICES.lock();
+    let res = dev.push(Device {bus, device, func, header_type, class_code});
     match res {
         Ok(_) => Ok(()),
         Err(_) => Err(make_error!(Code::Full)),

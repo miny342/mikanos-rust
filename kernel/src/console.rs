@@ -1,5 +1,7 @@
 use core::fmt::{self, Write};
 use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicBool, Ordering};
+use spin::{MutexGuard, Mutex};
 
 use crate::graphics::*;
 use crate::font::*;
@@ -15,13 +17,13 @@ macro_rules! print {
 
 #[macro_export]
 macro_rules! println {
-    ($fmt:expr) => (print!(concat!($fmt, "\n")));
-    ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
+    ($fmt:expr) => ($crate::print!(concat!($fmt, "\n")));
+    ($fmt:expr, $($arg:tt)*) => ($crate::print!(concat!($fmt, "\n"), $($arg)*));
 }
 
 pub fn _print(args: fmt::Arguments) {
     let c = Console::get().unwrap();
-    c.write_fmt(args).unwrap();
+    c.lock().write_fmt(args).unwrap();
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,8 +37,8 @@ pub struct Console {
     bg: PixelColor,
 }
 
-static mut CONSOLE: MaybeUninit<Console> = MaybeUninit::<Console>::uninit();
-static mut INITIALIZED: bool = false;
+static mut CONSOLE: MaybeUninit<Mutex<Console>> = MaybeUninit::<Mutex<Console>>::uninit();
+static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 impl Console {
     pub fn new(color: PixelColor, bg: PixelColor) -> Self {
@@ -52,43 +54,42 @@ impl Console {
     }
 
     pub unsafe fn init(color: PixelColor, bg: PixelColor ) {
-        CONSOLE.write(Console::new(color, bg));
-        INITIALIZED = true;
+        CONSOLE.write(Mutex::new(Console::new(color, bg)));
+        INITIALIZED.store(true, Ordering::Relaxed);
     }
 
-    pub fn get() -> Result<&'static mut Self, &'static str> {
-        unsafe {
-            if INITIALIZED {
-                Ok(&mut *CONSOLE.as_mut_ptr())
-            } else {
-                Err("this is not uninitialized")
-            }
+    pub fn get() -> Result<&'static Mutex<Self>, &'static str> {
+        if INITIALIZED.load(Ordering::Relaxed) {
+            Ok(unsafe { CONSOLE.assume_init_mut() })
+        } else {
+            Err("this is not uninitialized")
         }
     }
 
     pub fn put_string(&mut self, s: &str) {
-        let writer = PixelWriter::get().unwrap();
+        let writer_ = PixelWriter::get().unwrap();
+        let mut writer = writer_.lock();
         for b in s.bytes() {
             let c = b as char;
             if c == '\n' {
-                self.new_line(&writer);
+                self.new_line(&mut writer);
             } else if self.cursor_col < self.column {
-                self.write_ascii_with_update(&writer, c);
+                self.write_ascii_with_update(&mut writer, c);
             }
             else {
-                self.new_line(&writer);
-                self.write_ascii_with_update(&writer, c);
+                self.new_line(&mut writer);
+                self.write_ascii_with_update(&mut writer, c);
             }
         }
     }
 
-    fn write_ascii_with_update(&mut self, writer: &PixelWriter, c: char) {
-        write_ascii(&writer, self.cursor_col * 8 + MARGIN, self.cursor_row * 16 + MARGIN, c, &self.color);
+    fn write_ascii_with_update(&mut self, writer: &mut MutexGuard<PixelWriter>, c: char) {
+        write_ascii(writer, self.cursor_col * 8 + MARGIN, self.cursor_row * 16 + MARGIN, c, &self.color);
         self.buf[self.cursor_row][self.cursor_col] = c;
         self.cursor_col += 1;
     }
 
-    fn new_line(&mut self, writer: &PixelWriter) {
+    fn new_line(&mut self, writer: &mut MutexGuard<PixelWriter>) {
         self.cursor_col = 0;
         if self.cursor_row < self.row - 1 {
             self.cursor_row += 1;
@@ -102,7 +103,7 @@ impl Console {
         for i in 0..self.row - 1 {
             for j in 0..self.column {
                 let c = self.buf[i + 1][j];
-                write_ascii(&writer, j * 8 + MARGIN, i * 16 + MARGIN, c, &self.color);
+                write_ascii(writer, j * 8 + MARGIN, i * 16 + MARGIN, c, &self.color);
                 self.buf[i][j] = c;
             }
         }

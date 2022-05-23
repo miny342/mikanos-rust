@@ -1,4 +1,6 @@
-use core::mem::MaybeUninit;
+use core::{mem::MaybeUninit, ptr::slice_from_raw_parts_mut};
+use spin::Mutex;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 #[repr(C)]
 #[allow(dead_code)]
@@ -13,10 +15,11 @@ pub enum PixelFormat {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FrameBufferConfig {
-    pub frame_buffer: *mut u8,
+    pub frame_buffer: *mut [u8; 4],
     pub pixels_per_scan_line: usize,
     pub horizontal_resolution: usize,
     pub vertical_resolution: usize,
+    pub size: usize,
     pub pixel_format: PixelFormat,
 }
 
@@ -27,49 +30,54 @@ pub struct PixelColor {
     pub b: u8
 }
 
-#[inline(always)]
-unsafe fn pixel_at(config: &FrameBufferConfig, x: usize, y: usize) -> *mut u8 {
-    config.frame_buffer.add(4 * (config.pixels_per_scan_line * y + x))
+fn write_rgb(pos: &mut [u8; 4], c: &PixelColor) {
+    pos[0] = c.r;
+    pos[1] = c.g;
+    pos[2] = c.b;
 }
 
-unsafe fn write_rgb(pos: *mut u8, c: &PixelColor) {
-    *pos = c.r;
-    *(pos.add(1)) = c.g;
-    *(pos.add(2)) = c.b;
+fn write_bgr(pos: &mut [u8; 4], c: &PixelColor) {
+    pos[0] = c.b;
+    pos[1] = c.g;
+    pos[2] = c.r;
 }
 
-unsafe fn write_bgr(pos: *mut u8, c: &PixelColor) {
-    *pos = c.b;
-    *(pos.add(1)) = c.g;
-    *(pos.add(2)) = c.r;
-}
-
-#[derive(Clone, Copy)]
 pub struct PixelWriter {
-    pub config: FrameBufferConfig,
-    write_: unsafe fn(pos: *mut u8, c: &PixelColor),
+    // pub config: FrameBufferConfig,
+    frame_buffer: &'static mut [[u8; 4]],
+    pixels_per_scan_line: usize,
+    horizontal_resolution: usize,
+    vertical_resolution: usize,
+    pixel_format: PixelFormat,
+    write_: fn(pos: &mut [u8; 4], c: &PixelColor),
 }
 
-static mut WRITER: MaybeUninit<PixelWriter> = MaybeUninit::<PixelWriter>::uninit();
-static mut INITIALIZED: bool = false;
+static mut WRITER: MaybeUninit<Mutex<PixelWriter>> = MaybeUninit::<Mutex<PixelWriter>>::uninit();
+static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 impl PixelWriter {
-    pub fn new(config: FrameBufferConfig) -> Self {
+    unsafe fn new(config: FrameBufferConfig) -> Self {
         let f = match config.pixel_format {
             PixelFormat::Rgb => write_rgb,
             PixelFormat::Bgr => write_bgr,
             _ => panic!("can't use this writer")
         };
+        assert!(config.size % 4 == 0);
+        assert!(config.size == config.vertical_resolution * config.horizontal_resolution * 4);
         PixelWriter {
-            config,
+            frame_buffer: &mut *slice_from_raw_parts_mut(config.frame_buffer, config.size / 4),
+            pixels_per_scan_line: config.pixels_per_scan_line,
+            horizontal_resolution: config.horizontal_resolution,
+            vertical_resolution: config.vertical_resolution,
+            pixel_format: config.pixel_format,
             write_: f
         }
     }
 
-    pub fn get() -> Result<Self, &'static str> {
+    pub fn get() -> Result<&'static Mutex<Self>, &'static str> {
         unsafe {
-            if INITIALIZED {
-                Ok(WRITER.assume_init())
+            if INITIALIZED.load(Ordering::Relaxed) {
+                Ok(&WRITER.assume_init_ref())
             } else {
                 Err("pixel writer is not initialized")
             }
@@ -77,16 +85,22 @@ impl PixelWriter {
     }
 
     pub unsafe fn init(config: FrameBufferConfig) {
-        WRITER.write(PixelWriter::new(config));
-        INITIALIZED = true;
+        WRITER.write(Mutex::new(PixelWriter::new(config)));
+        INITIALIZED.store(true, Ordering::Relaxed);
     }
 
-    pub fn write(&self, x: usize, y: usize, c: &PixelColor) {
-        if x >= self.config.horizontal_resolution || y >= self.config.vertical_resolution {
+    pub fn horizontal_resolution(&self) -> usize {
+        self.horizontal_resolution
+    }
+
+    pub fn vertical_resolution(&self) -> usize {
+        self.vertical_resolution
+    }
+
+    pub fn write(&mut self, x: usize, y: usize, c: &PixelColor) {
+        if x >= self.horizontal_resolution || y >= self.vertical_resolution {
             return;
         }
-        unsafe {
-            (self.write_)(pixel_at(&self.config, x, y), c);
-        }
+        (self.write_)(&mut self.frame_buffer[self.pixels_per_scan_line * y + x], c);
     }
 }

@@ -126,6 +126,8 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "heapless",
+ "spin",
+ "volatile-register",
 ]
 
 [[package]]

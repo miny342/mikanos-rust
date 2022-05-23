@@ -7,3 +7,5 @@ edition = "2021"
 
 [dependencies]
 heapless = "0.7.13"
+volatile-register = "0.2.1"
+spin = "0.9.3"

@@ -447,12 +447,10 @@ impl XhcController {
         }
     }
     pub fn run(&self) {
-        unsafe {
-            let usbcmd = self.capability.usb_command();
-            usbcmd.run();
-            let usbsts = self.capability.usb_status();
-            while usbsts.hchalted() {}
-        }
+        let usbcmd = self.capability.usb_command();
+        usbcmd.run();
+        let usbsts = self.capability.usb_status();
+        while usbsts.hchalted() {}
     }
     pub fn configure_port(&mut self) {
         unsafe {

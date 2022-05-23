@@ -1,7 +1,9 @@
+use spin::MutexGuard;
+
 use crate::graphics::*;
 use crate::ascii::FONTS;
 
-pub fn write_ascii(writer: &PixelWriter, x: usize, y: usize, c: char, color: &PixelColor) {
+pub fn write_ascii(writer: &mut MutexGuard<PixelWriter>, x: usize, y: usize, c: char, color: &PixelColor) {
     let i = c as u8;
     if (' ' as u8) <= i && i <= ('~' as u8) {
         for dy in 0..16 {
