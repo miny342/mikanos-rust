@@ -1,4 +1,5 @@
 use core::intrinsics::transmute;
+use core::ptr::slice_from_raw_parts_mut;
 use core::slice::from_raw_parts_mut;
 
 use crate::{println, print, debug, log, make_error, error};
@@ -116,6 +117,9 @@ impl PortStatusAndControlRegister {
         let v = self.data & 0x0e01c3e0;
         self.data = v | 0x200000;
     }
+    pub fn port_speed(&self) -> u8 {
+        ((self.data >> 10) & 0xf) as u8
+    }
 }
 
 #[repr(C, packed)]
@@ -178,8 +182,8 @@ impl CapabilityRegisters {
     pub fn port_sc(&self, port: u8) -> &mut PortStatusAndControlRegister {
         unsafe { &mut *((self.op_base() + 0x400 + 0x10 * (port as u64 - 1)) as *mut PortStatusAndControlRegister) }
     }
-    pub fn doorbell(&self) -> &mut DoorbellRegister {
-        unsafe { &mut *((self as *const CapabilityRegisters as u64 + self.doorbell_offset as u64) as *mut DoorbellRegister) }
+    pub fn doorbell(&self) -> &mut [DoorbellRegister] {
+        unsafe { &mut *(slice_from_raw_parts_mut((self as *const CapabilityRegisters as u64 + self.doorbell_offset as u64) as *mut DoorbellRegister, 256)) }
     }
 }
 
@@ -191,6 +195,67 @@ struct MemPool {
 }
 
 static mut DCBAA: MemPool = MemPool { x: [0; max_slots_en as usize + 1] };
+
+#[derive(Debug, Clone, Copy)]
+struct SlotContext {
+    data: [u32; 8]
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EndpointContext {
+    data: [u32; 8]
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+struct DeviceContext {
+    slot_ctx: SlotContext,
+    ep_ctx: [EndpointContext; 31]
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InputControlContext {
+    data: [u32; 8]
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+struct InputContext {
+    input_control_ctx: InputControlContext,
+    slot_ctx: SlotContext,
+    ep_ctx: [EndpointContext; 31]
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(align(4096))]
+struct XhciDevice {
+    device_ctx: DeviceContext,
+    input_ctx: InputContext,
+}
+
+static mut DEVICES_MEM: [XhciDevice; (max_slots_en + 1) as usize] = [
+    XhciDevice {
+        device_ctx: DeviceContext {
+            slot_ctx: SlotContext {
+                data: [0; 8]
+            },
+            ep_ctx: [EndpointContext {
+                data: [0; 8]
+            }; 31]
+        },
+        input_ctx: InputContext {
+            input_control_ctx: InputControlContext {
+                data: [0; 8]
+            },
+            slot_ctx: SlotContext {
+                data: [0; 8]
+            },
+            ep_ctx: [EndpointContext {
+                data: [0; 8]
+            }; 31]
+        }
+    }; (max_slots_en + 1) as usize
+];
 
 trait TRBtrait {
     const TY: u32;
@@ -235,6 +300,15 @@ impl TRB {
             ]
         }
     }
+    pub fn address_device_command_trb(input_context_ptr: *const InputContext, slot_id: u8) -> TRB {
+        let ptr = input_context_ptr as u64;
+        assert!(ptr & 0x3f == 0);
+        TRB {
+            data: [
+                (ptr & 0xfffffff0) as u32, (ptr >> 32) as u32, 0, ((slot_id as u32) << 24) | 11 << 10
+            ]
+        }
+    }
 }
 
 struct PortStatusChangeEventTRB {
@@ -268,8 +342,10 @@ impl PortStatusChangeEventTRB {
     }
 }
 
+#[repr(C, packed)]
 struct CommandCompletionEventTRB {
-    data: [u32; 4]
+    trb_ptr: u64,
+    data: [u32; 2]
 }
 
 impl TRBtrait for CommandCompletionEventTRB {
@@ -277,7 +353,22 @@ impl TRBtrait for CommandCompletionEventTRB {
 }
 
 impl CommandCompletionEventTRB {
-
+    fn ptr(&self) -> &TRB {
+        unsafe { &*((self.trb_ptr & !0xf) as *const TRB) }
+    }
+    fn slot_id(&self) -> u8 {
+        (self.data[1] >> 24) as u8
+    }
+    pub fn on_event(&self, xhc: &mut XhcController) {
+        let ty = self.ptr().ty();
+        println!("cce-ty:{}", ty);
+        if ty == 9 { // enable slot command
+            if xhc.port_config_phase[xhc.addressing_port as usize] != ConfigPhase::EnablingSlot {
+                panic!()
+            }
+            unsafe { xhc.address_deivce(self.slot_id(), xhc.addressing_port); }
+        }
+    }
 }
 
 const TRB_BUF_LEN: usize = 32;
@@ -371,7 +462,7 @@ struct InterruptRegister {
     event_ring_dequeue_pointer: u64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ConfigPhase {
     NotConnected,
     WaitingAddressed,
@@ -489,8 +580,36 @@ impl XhcController {
             unsafe {
                 CR_BUF.push(TRB::new_enable_slot_trb());
             }
-            self.capability.doorbell().ring(0, 0);
+            self.capability.doorbell()[0].ring(0, 0);
         }
+    }
+
+    pub unsafe fn address_deivce(&mut self, slot_id: u8, port_num: u8) {
+        let dev = &mut DEVICES_MEM[slot_id as usize];
+        DCBAA.x[slot_id as usize] = &dev.device_ctx as *const DeviceContext as u64;
+        for d in dev.input_ctx.input_control_ctx.data.iter_mut() {
+            *d = 0;
+        }
+        dev.input_ctx.input_control_ctx.data[1] |= 3;
+
+        let port = self.capability.port_sc(port_num);
+        dev.input_ctx.slot_ctx.data[0] = (dev.input_ctx.slot_ctx.data[0] & 0xff0fffff) | ((port.port_speed() as u32) << 20);
+        dev.input_ctx.slot_ctx.data[1] = (dev.input_ctx.slot_ctx.data[1] & 0xff00ffff) | ((port_num as u32) << 16);
+
+        let max_packet = match port.port_speed() {
+            1 | 2 => 8u32,
+            3 => 64,
+            4 => 512,
+            _ => panic!()
+        };
+
+        dev.input_ctx.ep_ctx[0].data[1] = max_packet << 16 | 4 << 3 | 3 << 1;
+        dev.input_ctx.ep_ctx[0].data[2] = 1;
+
+        self.port_config_phase[port_num as usize] = ConfigPhase::AddressingDevice;
+
+        CR_BUF.push(TRB::address_device_command_trb(&dev.input_ctx as *const InputContext, slot_id));
+        self.capability.doorbell()[0].ring(0, 0);
     }
 
     pub fn process_event(&mut self) {
@@ -501,6 +620,8 @@ impl XhcController {
             let v4 = trb.data[3];
             debug!("{:x} {:x} {:x} {:x}", v1, v2, v3, v4);
             if let Some(casted) = trb.cast::<PortStatusChangeEventTRB>() {
+                casted.on_event(self)
+            } else if let Some(casted) = trb.cast::<CommandCompletionEventTRB>() {
                 casted.on_event(self)
             }
         }
@@ -514,7 +635,10 @@ pub unsafe fn driver_handle_test(mmio_base: u64, device: &Device) {
     xhci.run();
     xhci.configure_port();
 
-    xhci.process_event();
+    loop {
+        xhci.process_event();
+    }
+
 
     // initialized
 
