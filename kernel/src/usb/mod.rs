@@ -2,6 +2,8 @@ use core::intrinsics::transmute;
 use core::ptr::slice_from_raw_parts_mut;
 use core::slice::from_raw_parts_mut;
 
+use volatile_register::RW;
+
 use crate::{println, print, debug, log, make_error, error};
 use crate::pci::{
     Device, read_config_reg
@@ -10,81 +12,81 @@ use crate::error::*;
 
 type HandleError<T> = Result<T, Error>;
 
-#[repr(C, packed)]
+#[repr(C)]
 struct UsbStatusRegister {
-    data: u32
+    data: RW<u32>
 }
 
 impl UsbStatusRegister {
     pub fn hchalted(&self) -> bool {
-        self.data & 0x1 != 0
+        self.data.read() & 0x1 != 0
     }
     pub fn controller_not_ready(&self) -> bool {
-        (self.data >> 11) & 0x1 != 0
+        (self.data.read() >> 11) & 0x1 != 0
     }
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 struct UsbCommandRegister {
-    data: u32
+    data: RW<u32>
 }
 
 impl UsbCommandRegister {
     pub fn run(&mut self) {
-        self.data = self.data | 0x1;
+        unsafe { self.data.write(self.data.read() | 0x1) }
     }
     pub fn host_controller_reset(&self) -> bool {
-        (self.data >> 1) & 0x1 != 0
+        (self.data.read() >> 1) & 0x1 != 0
     }
     pub fn set_host_controller_reset(&mut self, value: bool) {
-        self.data = (self.data & !0x2) | ((value as u32) << 1);
+        unsafe { self.data.write((self.data.read() & !0x2) | ((value as u32) << 1)) }
     }
     pub fn set_interrupt_enable(&mut self, value: bool) {
-        self.data = (self.data & !0x4) | ((value as u32) << 2);
+        unsafe { self.data.write((self.data.read() & !0x4) | ((value as u32) << 2)) }
     }
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 struct ConfigureRegister {
-    data: u32
+    data: RW<u32>
 }
 
 impl ConfigureRegister {
     pub fn set_max_slots_en(&mut self, value: u8) {
-        self.data = (self.data & !0xff) | (value as u32)
+        unsafe { self.data.write((self.data.read() & !0xff) | (value as u32)) }
     }
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 struct DeviceContextBaseAddressArrayPointerRegister {
-    data: u64
+    data: RW<u64>
 }
 
 impl DeviceContextBaseAddressArrayPointerRegister {
     pub fn set_dcbaap(&mut self, value: u64) {
         assert!(value & 0x3f == 0);
-        self.data = value;
+        unsafe { self.data.write(value) }
     }
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 struct CommandRingControlRegister {
-    data: u64
+    data: RW<u64>
 }
 
 impl CommandRingControlRegister {
     pub fn set_ring_cycle_state(&mut self, value: bool) {
-        self.data = (self.data & !0x1) | (value as u64)
+        unsafe { self.data.write((self.data.read() & !0x1) | (value as u64)) }
     }
     pub fn set_pointer(&mut self, value: u64) {
         assert!(value & 0x3f == 0);
-        self.data = (self.data & 0x3f) | value;
+        unsafe { self.data.write((self.data.read() & 0x3f) | value) }
     }
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 struct HostControllerRuntimeRegister {
-    data: u32
+    data: RW<u32>
 }
 
 impl HostControllerRuntimeRegister {
@@ -93,64 +95,71 @@ impl HostControllerRuntimeRegister {
     }
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 struct PortStatusAndControlRegister {
-    data: u32
+    data: RW<u32>
 }
 
 impl PortStatusAndControlRegister {
     pub fn is_connected(&self) -> bool {
-        self.data & 0x1 != 0
+        self.data.read() & 0x1 != 0
     }
     pub fn is_enabled(&self) -> bool {
-        self.data & 0x2 != 0
+        self.data.read() & 0x2 != 0
     }
     pub fn reset(&mut self) {
-        let val = self.data & 0x0e00c3e0;
-        self.data = val | 0x00020010;
+        let val = self.data.read() & 0x0e00c3e0;
+        unsafe { self.data.write(val | 0x00020010) }
         while !self.is_enabled() {}
     }
     pub fn is_port_reset_changed(&self) -> bool {
-        self.data & 0x200000 != 0
+        self.data.read() & 0x200000 != 0
     }
     pub fn clear_is_port_reset_changed(&mut self) {
-        let v = self.data & 0x0e01c3e0;
-        self.data = v | 0x200000;
+        let v = self.data.read() & 0x0e01c3e0;
+        unsafe {self.data.write(v | 0x200000) };
     }
     pub fn port_speed(&self) -> u8 {
-        ((self.data >> 10) & 0xf) as u8
+        ((self.data.read() >> 10) & 0xf) as u8
     }
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 struct DoorbellRegister {
-    data: u32
+    data: RW<u32>
 }
 
 impl DoorbellRegister {
     pub fn ring(&mut self, target: u8, stream_id: u16) {
-        self.data = (target as u32) | ((stream_id as u32) << 16)
+        unsafe { self.data.write((target as u32) | ((stream_id as u32) << 16)) }
     }
 }
 
 
-#[repr(C, packed)]
+#[repr(C)]
 struct CapabilityRegisters {
-    length: u8,
-    rsvdz1: u8,
-    hci_version: u16,
-    hcs_params1: u32,
-    hcs_params2: u32,
-    hcs_params3: u32,
-    hcc_params1: u32,
-    doorbell_offset: u32,
-    runtime_reg_offset: u32,
-    hcc_params2: u32,
+    // length: u8,
+    // rsvdz1: u8,
+    // hci_version: u16,
+    data: RW<u32>,
+    hcs_params1: RW<u32>,
+    hcs_params2: RW<u32>,
+    hcs_params3: RW<u32>,
+    hcc_params1: RW<u32>,
+    doorbell_offset: RW<u32>,
+    runtime_reg_offset: RW<u32>,
+    hcc_params2: RW<u32>,
 }
 
 impl CapabilityRegisters {
+    fn length(&self) -> u8 {
+        (self.data.read() & 0xff) as u8
+    }
+    fn hci_version(&self) -> u16 {
+        (self.data.read() >> 16) as u16
+    }
     fn op_base(&self) -> u64 {
-        self as *const CapabilityRegisters as u64 + self.length as u64
+        self as *const CapabilityRegisters as u64 + self.length() as u64
     }
     pub fn usb_status(&self) -> &mut UsbStatusRegister {
         unsafe { &mut *((self.op_base() + 0x04) as *mut UsbStatusRegister) }
@@ -159,10 +168,10 @@ impl CapabilityRegisters {
         unsafe { &mut *(self.op_base() as *mut UsbCommandRegister) }
     }
     pub fn max_slots(&self) -> u8 {
-        (self.hcs_params1 & 0xff) as u8
+        (self.hcs_params1.read() & 0xff) as u8
     }
     pub fn max_ports(&self) -> u8 {
-        (self.hcs_params1 >> 24) as u8
+        (self.hcs_params1.read() >> 24) as u8
     }
     pub fn pagesize(&self) -> u32 {
         unsafe { *((self.op_base() + 0x8) as *const u32) }
@@ -177,13 +186,13 @@ impl CapabilityRegisters {
         unsafe { &mut *((self.op_base() + 0x18) as *mut CommandRingControlRegister) }
     }
     pub fn runtime(&self) -> &mut HostControllerRuntimeRegister {
-        unsafe { &mut *((self as *const CapabilityRegisters as u64 + self.runtime_reg_offset as u64) as *mut HostControllerRuntimeRegister) }
+        unsafe { &mut *((self as *const CapabilityRegisters as u64 + self.runtime_reg_offset.read() as u64) as *mut HostControllerRuntimeRegister) }
     }
     pub fn port_sc(&self, port: u8) -> &mut PortStatusAndControlRegister {
         unsafe { &mut *((self.op_base() + 0x400 + 0x10 * (port as u64 - 1)) as *mut PortStatusAndControlRegister) }
     }
     pub fn doorbell(&self) -> &mut [DoorbellRegister] {
-        unsafe { &mut *(slice_from_raw_parts_mut((self as *const CapabilityRegisters as u64 + self.doorbell_offset as u64) as *mut DoorbellRegister, 256)) }
+        unsafe { &mut *(slice_from_raw_parts_mut((self as *const CapabilityRegisters as u64 + self.doorbell_offset.read() as u64) as *mut DoorbellRegister, 256)) }
     }
 }
 
@@ -440,8 +449,8 @@ impl MemPoolErTRB {
     }
     pub unsafe fn clean(&self, xhc: &XhcController) {
         let interrupt_reg = xhc.capability.runtime().interrupt_set();
-        let p = interrupt_reg[0].event_ring_dequeue_pointer & 0xf;
-        interrupt_reg[0].event_ring_dequeue_pointer = p | (&self.x[self.index] as *const TRB as u64);
+        let p = interrupt_reg[0].event_ring_dequeue_pointer.read() & 0xf;
+        unsafe { interrupt_reg[0].event_ring_dequeue_pointer.write(p | (&self.x[self.index] as *const TRB as u64)) };
     }
 }
 
@@ -452,14 +461,14 @@ struct MemPoolDeviceCtx {
 
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 struct InterruptRegister {
-    management: u32,
-    moderation: u32,
-    event_ring_segment_table_size: u32,
-    rsvdz1: u32,
-    event_ring_segment_table_base_addr: u64,
-    event_ring_dequeue_pointer: u64,
+    management: RW<u32>,
+    moderation: RW<u32>,
+    event_ring_segment_table_size: RW<u32>,
+    rsvdz1: RW<u32>,
+    event_ring_segment_table_base_addr: RW<u64>,
+    event_ring_dequeue_pointer: RW<u64>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -483,7 +492,7 @@ struct XhcController {
 impl XhcController {
     pub unsafe fn initialize(mmio_base: u64) -> XhcController {
         let cap_reg = &*(mmio_base as *const CapabilityRegisters);
-        debug!("cap reg: {}", cap_reg.length);
+        debug!("cap reg: {}", cap_reg.length());
 
         let usbsts = cap_reg.usb_status(); // &*((op_base + 0x04) as *const u32);
 
@@ -523,13 +532,13 @@ impl XhcController {
 
         let runtime = cap_reg.runtime();
         let interrupt_regs = runtime.interrupt_set();
-        interrupt_regs[0].event_ring_segment_table_size = 1;
-        interrupt_regs[0].event_ring_dequeue_pointer = ptr;
+        interrupt_regs[0].event_ring_segment_table_size.write(1);
+        interrupt_regs[0].event_ring_dequeue_pointer.write(ptr);
         let ptr = ERSTE_BUF.x.as_ptr() as u64;
         assert!(ptr & 0x3f == 0);
-        interrupt_regs[0].event_ring_segment_table_base_addr = ptr;
-        interrupt_regs[0].moderation = 4000;
-        interrupt_regs[0].management = 0x3;
+        interrupt_regs[0].event_ring_segment_table_base_addr.write(ptr);
+        interrupt_regs[0].moderation.write(4000);
+        interrupt_regs[0].management.write(0x3);
         usbcmd.set_interrupt_enable(true);
         XhcController {
             capability: cap_reg,

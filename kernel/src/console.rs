@@ -1,13 +1,14 @@
 use core::fmt::{self, Write};
 use core::mem::MaybeUninit;
+use core::slice::SliceIndex;
 use core::sync::atomic::{AtomicBool, Ordering};
 use spin::{MutexGuard, Mutex};
 
 use crate::graphics::*;
 use crate::font::*;
 
-const ROW: usize = 25;
-const COL: usize = 80;
+const ROW: usize = 45;
+const COL: usize = 150;
 const MARGIN: usize = 4;
 
 #[macro_export]
@@ -95,19 +96,24 @@ impl Console {
             self.cursor_row += 1;
             return
         }
-        for y in 0..self.row * 16 {
-            for x in 0..self.column * 8 {
-                writer.write(x + MARGIN, y + MARGIN, &self.bg)
-            }
-        }
         for i in 0..self.row - 1 {
             for j in 0..self.column {
+                for y in 0..16 {
+                    for x in 0..8 {
+                        writer.write(j * 8 + x + MARGIN, i * 16 + y + MARGIN, &self.bg)
+                    }
+                }
                 let c = self.buf[i + 1][j];
                 write_ascii(writer, j * 8 + MARGIN, i * 16 + MARGIN, c, &self.color);
                 self.buf[i][j] = c;
             }
         }
         for i in 0..self.column {
+            for y in 0..16 {
+                for x in 0..8 {
+                    writer.write(i * 8 + x + MARGIN, 16 * (self.row - 1) + y + MARGIN, &self.bg)
+                }
+            }
             self.buf[self.row - 1][i] = 0 as char;
         }
     }
