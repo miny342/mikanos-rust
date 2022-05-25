@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! make_error {
     ($c:expr) => {
-        Error {
+        $crate::error::Error {
             code: $c,
             line: line!(),
             file: file!(),

@@ -35,17 +35,17 @@ fn panic(info: &PanicInfo) -> ! {
 extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
     unsafe {
         PixelWriter::init(*config);
-        Console::init(PixelColor { r: 0, g: 0, b: 0}, PixelColor { r: 255, g: 255, b: 255 })
+        Console::init(PixelColor { r: 255, g: 255, b: 255}, PixelColor { r: 0, g: 0, b: 0 })
     };
     let writer = PixelWriter::get().unwrap();
 
     {
         let mut writer = writer.lock();
-        for x in 0..writer.horizontal_resolution() {
-            for y in 0..writer.vertical_resolution() {
-                writer.write(x, y, &PixelColor { r: 255, g: 255, b: 255 });
-            }
-        }
+        // for x in 0..writer.horizontal_resolution() {
+        //     for y in 0..writer.vertical_resolution() {
+        //         writer.write(x, y, &PixelColor { r: 255, g: 255, b: 255 });
+        //     }
+        // }
         for x in 0..200 {
             for y in 0..100 {
                 writer.write(100 + x, 100 + y, &PixelColor { r: 255, g: 0, b: 255 });

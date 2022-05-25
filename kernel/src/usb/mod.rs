@@ -1,13 +1,11 @@
 use core::intrinsics::transmute;
-use core::ptr::slice_from_raw_parts_mut;
+use core::ptr::{slice_from_raw_parts_mut, write_volatile};
 use core::slice::from_raw_parts_mut;
 
 use volatile_register::RW;
 
-use crate::{println, print, debug, log, make_error, error};
-use crate::pci::{
-    Device, read_config_reg
-};
+use crate::{println, debug, make_error, error};
+use crate::pci::Device;
 use crate::error::*;
 
 type HandleError<T> = Result<T, Error>;
@@ -205,9 +203,40 @@ struct MemPool {
 
 static mut DCBAA: MemPool = MemPool { x: [0; max_slots_en as usize + 1] };
 
+struct EndpointID {
+    addr: u32
+}
+
+impl EndpointID {
+    fn new(ep_num: u32, dir_in: bool) -> EndpointID {
+        EndpointID {
+            addr: ep_num << 1 | (dir_in as u32)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClassDriver {
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct SetupData {
+    request: u16,
+    value: u16,
+    index: u16,
+    length: u16
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SlotContext {
     data: [u32; 8]
+}
+
+impl SlotContext {
+    fn root_hub_port_num(&self) -> u8 {
+        (self.data[1] >> 16 & 0xff) as u8
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -215,7 +244,7 @@ struct EndpointContext {
     data: [u32; 8]
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct DeviceContext {
     slot_ctx: SlotContext,
@@ -227,7 +256,7 @@ struct InputControlContext {
     data: [u32; 8]
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct InputContext {
     input_control_ctx: InputControlContext,
@@ -240,6 +269,55 @@ struct InputContext {
 struct XhciDevice {
     device_ctx: DeviceContext,
     input_ctx: InputContext,
+    is_initialized: bool,
+    initialize_phase: u32,
+    slot_id: u8,
+    buf: [u8; 256],
+    class_driver: [ClassDriver; 16],
+}
+
+impl XhciDevice {
+    fn start_init(&mut self, xhc: &mut XhcController) {
+        let setup_trb = TRB {
+            data: [
+                0b10000000 | 6 << 8 | 0x0100 << 16,
+                (self.buf.len() as u32) << 16,
+                8,
+                2 << 10 | 3 << 16
+            ]
+        };
+        let ptr = self.buf.as_ptr() as u64;
+        let data_trb = TRB {
+            data: [
+                (ptr & 0xffffffff) as u32,
+                (ptr >> 32) as u32,
+                (self.buf.len() as u32),
+                1 << 16 | 1 << 5 | 3 << 10,
+            ]
+        };
+        let status_trb = TRB {
+            data: [
+                0, 0, 0, 4 << 10
+            ]
+        };
+        let no_op = TRB {
+            data: [
+                0, 0, 0, 1 << 5 | 8 << 10
+            ]
+        };
+        unsafe {
+            // TR_BUF[self.slot_id as usize].push(setup_trb);
+            // TR_BUF[self.slot_id as usize].push(data_trb);
+            // TR_BUF[self.slot_id as usize].push(status_trb);
+            TR_BUF[self.slot_id as usize].push(no_op);
+        }
+        debug!("called {}", self.slot_id);
+        // xhc.capability.doorbell()[self.slot_id as usize].ring(1, 0);
+
+        unsafe {
+            write_volatile(((xhc.capability.op_base() + xhc.capability.doorbell_offset.read() as u64) as *mut u32).offset(self.slot_id as isize), 1);
+        }
+    }
 }
 
 static mut DEVICES_MEM: [XhciDevice; (max_slots_en + 1) as usize] = [
@@ -262,7 +340,12 @@ static mut DEVICES_MEM: [XhciDevice; (max_slots_en + 1) as usize] = [
             ep_ctx: [EndpointContext {
                 data: [0; 8]
             }; 31]
-        }
+        },
+        is_initialized: false,
+        initialize_phase: 0,
+        slot_id: 0,
+        buf: [0; 256],
+        class_driver: [ClassDriver {}; 16],
     }; (max_slots_en + 1) as usize
 ];
 
@@ -301,8 +384,7 @@ impl TRB {
             ]
         }
     }
-    pub fn new_link_trb() -> TRB {
-        let ptr = unsafe { CR_BUF.x.as_ptr() as u64 };
+    pub fn new_link_trb(ptr: u64) -> TRB {
         TRB {
             data: [
                 (ptr & 0xfffffff0) as u32, (ptr >> 32) as u32, 0, 6 << 10
@@ -376,6 +458,26 @@ impl CommandCompletionEventTRB {
                 panic!()
             }
             unsafe { xhc.address_deivce(self.slot_id(), xhc.addressing_port); }
+        } else if ty == 11 { // address device command
+            unsafe {
+                let dev = &DEVICES_MEM[self.slot_id() as usize];
+                let port_id = dev.device_ctx.slot_ctx.root_hub_port_num();
+                if port_id != xhc.addressing_port || xhc.port_config_phase[port_id as usize] != ConfigPhase::AddressingDevice {
+                    panic!()
+                }
+
+                xhc.addressing_port = 0;
+                if let Some(next_port_id) = xhc.port_config_phase.iter().enumerate().filter(|x| *x.1 == ConfigPhase::WaitingAddressed).next() {
+                    let port = xhc.capability.port_sc(next_port_id.0 as u8);
+                    if port.is_connected() {
+                        xhc.reset_port(next_port_id.0 as u8)
+                    }
+                }
+
+                xhc.initialize_device(self.slot_id(), port_id);
+            }
+        } else {
+            error!("{}", make_error!(Code::NotImplemented))
         }
     }
 }
@@ -397,7 +499,7 @@ impl MemPoolCrTRB {
         }
         self.index += 1;
         if self.index == TRB_BUF_LEN - 1 {
-            let mut link = TRB::new_link_trb();
+            let mut link = TRB::new_link_trb(self.x.as_ptr() as u64);
             link.data[3] = link.data[3] | (self.cycle as u32);
             for i in 0..4 {
                 self.x[self.index].data[i] = link.data[i];
@@ -450,16 +552,45 @@ impl MemPoolErTRB {
     pub unsafe fn clean(&self, xhc: &XhcController) {
         let interrupt_reg = xhc.capability.runtime().interrupt_set();
         let p = interrupt_reg[0].event_ring_dequeue_pointer.read() & 0xf;
-        unsafe { interrupt_reg[0].event_ring_dequeue_pointer.write(p | (&self.x[self.index] as *const TRB as u64)) };
+        interrupt_reg[0].event_ring_dequeue_pointer.write(p | (&self.x[self.index] as *const TRB as u64));
     }
 }
 
 static mut ER_BUF: MemPoolErTRB = MemPoolErTRB { x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true };
 
-#[repr(align(4096))]  // this is PAGESIZE = 1
-struct MemPoolDeviceCtx {
-
+#[derive(Clone, Copy)]
+#[repr(C, align(64))]
+struct MemPoolTrTRB {
+    x: [TRB; TRB_BUF_LEN],
+    index: usize,
+    cycle: bool,
 }
+
+impl MemPoolTrTRB {
+    pub fn push(&mut self, mut trb: TRB) {
+        trb.data[3] = (trb.data[3] & !0x1) | (self.cycle as u32);
+        for i in 0..4 {
+            self.x[self.index].data[i] = trb.data[i]
+        }
+        self.index += 1;
+        if self.index == TRB_BUF_LEN - 1 {
+            let mut link = TRB::new_link_trb(self.x.as_ptr() as u64);
+            link.data[3] = link.data[3] | (self.cycle as u32);
+            for i in 0..4 {
+                self.x[self.index].data[i] = link.data[i];
+            }
+            self.index = 0;
+            self.cycle = !self.cycle;
+        }
+    }
+}
+
+static mut TR_BUF: [MemPoolTrTRB; (max_slots_en + 1) as usize] = [
+    MemPoolTrTRB {
+        x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true
+    }; (max_slots_en + 1) as usize
+];
+
 
 #[repr(C)]
 struct InterruptRegister {
@@ -493,6 +624,10 @@ impl XhcController {
     pub unsafe fn initialize(mmio_base: u64) -> XhcController {
         let cap_reg = &*(mmio_base as *const CapabilityRegisters);
         debug!("cap reg: {}", cap_reg.length());
+
+        if cap_reg.hcc_params1.read() & 0b100 != 0 {
+            panic!("not surpport 64bit context")
+        }
 
         let usbsts = cap_reg.usb_status(); // &*((op_base + 0x04) as *const u32);
 
@@ -577,7 +712,9 @@ impl XhcController {
                 self.port_config_phase[port_num as usize] = ConfigPhase::ResettingPort;
                 port.reset();
             },
-            _ => {}
+            _ => {
+                error!("{}", make_error!(Code::InvalidPhase))
+            }
         }
     }
 
@@ -595,30 +732,41 @@ impl XhcController {
 
     pub unsafe fn address_deivce(&mut self, slot_id: u8, port_num: u8) {
         let dev = &mut DEVICES_MEM[slot_id as usize];
+        dev.slot_id = slot_id;
         DCBAA.x[slot_id as usize] = &dev.device_ctx as *const DeviceContext as u64;
         for d in dev.input_ctx.input_control_ctx.data.iter_mut() {
             *d = 0;
         }
-        dev.input_ctx.input_control_ctx.data[1] |= 3;
+        dev.input_ctx.input_control_ctx.data[1] |= 0b11;
 
         let port = self.capability.port_sc(port_num);
-        dev.input_ctx.slot_ctx.data[0] = (dev.input_ctx.slot_ctx.data[0] & 0xff0fffff) | ((port.port_speed() as u32) << 20);
-        dev.input_ctx.slot_ctx.data[1] = (dev.input_ctx.slot_ctx.data[1] & 0xff00ffff) | ((port_num as u32) << 16);
+        dev.input_ctx.slot_ctx.data[0] = ((port.port_speed() as u32) << 20) | 1 << 27;
+        dev.input_ctx.slot_ctx.data[1] = (port_num as u32) << 16;
 
         let max_packet = match port.port_speed() {
             1 | 2 => 8u32,
             3 => 64,
             4 => 512,
-            _ => panic!()
+            _ => {
+                panic!("{}", make_error!(Code::UnknownXHCISpeedID))
+            }
         };
 
+        let ptr = &mut TR_BUF[slot_id as usize] as *mut MemPoolTrTRB as u64;
+        assert!(ptr & 0x3f == 0);
         dev.input_ctx.ep_ctx[0].data[1] = max_packet << 16 | 4 << 3 | 3 << 1;
-        dev.input_ctx.ep_ctx[0].data[2] = 1;
+        dev.input_ctx.ep_ctx[0].data[2] = (ptr & 0xffffffc0) as u32 | 1;
+        dev.input_ctx.ep_ctx[0].data[3] = (ptr >> 32) as u32;
 
         self.port_config_phase[port_num as usize] = ConfigPhase::AddressingDevice;
 
-        CR_BUF.push(TRB::address_device_command_trb(&dev.input_ctx as *const InputContext, slot_id));
+        CR_BUF.push(TRB::address_device_command_trb(&dev.input_ctx, slot_id));
         self.capability.doorbell()[0].ring(0, 0);
+    }
+
+    pub fn initialize_device(&mut self, slot_id: u8, port_num: u8) {
+        self.port_config_phase[port_num as usize] = ConfigPhase::InitializingDevice;
+        unsafe { DEVICES_MEM[slot_id as usize].start_init(self) };
     }
 
     pub fn process_event(&mut self) {
@@ -631,7 +779,12 @@ impl XhcController {
             if let Some(casted) = trb.cast::<PortStatusChangeEventTRB>() {
                 casted.on_event(self)
             } else if let Some(casted) = trb.cast::<CommandCompletionEventTRB>() {
+                if v3 >> 24 != 1 {
+                    error!("command completion error: {}", v3 >> 24);
+                }
                 casted.on_event(self)
+            } else {
+                error!("{}", make_error!(Code::NotImplemented))
             }
         }
         unsafe { ER_BUF.clean(self) }
@@ -644,8 +797,17 @@ pub unsafe fn driver_handle_test(mmio_base: u64, device: &Device) {
     xhci.run();
     xhci.configure_port();
 
+    debug!("tr_buf: {:p}", TR_BUF[1].x.as_ptr());
+    debug!("dcbaa: {:p}", DCBAA.x.as_ptr());
+    debug!("ptr: {:p}", DEVICES_MEM[1].device_ctx.slot_ctx.data.as_ptr());
+    debug!("ptr2: {:p}", DEVICES_MEM[1].buf.as_ptr());
+    debug!("doorbell: {:p}", xhci.capability.doorbell().as_ptr());
+
+    debug!("doorbell1: {:p}", &xhci.capability.doorbell()[1] as *const DoorbellRegister);
+
     loop {
         xhci.process_event();
+        // xhci.capability.doorbell()[1]
     }
 
 
