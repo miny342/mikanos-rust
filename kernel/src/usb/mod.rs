@@ -2,7 +2,7 @@ use core::intrinsics::transmute;
 use core::ptr::{slice_from_raw_parts_mut, write_volatile};
 use core::slice::from_raw_parts_mut;
 
-use volatile_register::RW;
+use volatile_register::{RW, RO, WO};
 
 use crate::{println, debug, make_error, error};
 use crate::pci::Device;
@@ -32,6 +32,9 @@ struct UsbCommandRegister {
 impl UsbCommandRegister {
     pub fn run(&mut self) {
         unsafe { self.data.write(self.data.read() | 0x1) }
+    }
+    pub fn stop(&mut self) {
+        unsafe { self.data.write(self.data.read() & !0x1) }
     }
     pub fn host_controller_reset(&self) -> bool {
         (self.data.read() >> 1) & 0x1 != 0
@@ -73,12 +76,15 @@ struct CommandRingControlRegister {
 }
 
 impl CommandRingControlRegister {
-    pub fn set_ring_cycle_state(&mut self, value: bool) {
-        unsafe { self.data.write((self.data.read() & !0x1) | (value as u64)) }
-    }
-    pub fn set_pointer(&mut self, value: u64) {
-        assert!(value & 0x3f == 0);
-        unsafe { self.data.write((self.data.read() & 0x3f) | value) }
+    // pub fn set_ring_cycle_state(&mut self, value: bool) {
+    //     unsafe { self.data.write((self.data.read() & !0x1) | (value as u64)) }
+    // }
+    // pub fn set_pointer(&mut self, value: u64) {
+    //     assert!(value & 0x3f == 0);
+    //     unsafe { self.data.write((self.data.read() & 0x3f) | value) }
+    // }
+    pub unsafe fn set_value(&mut self, value: u64) {
+        self.data.write(value);
     }
 }
 
@@ -108,7 +114,10 @@ impl PortStatusAndControlRegister {
     pub fn reset(&mut self) {
         let val = self.data.read() & 0x0e00c3e0;
         unsafe { self.data.write(val | 0x00020010) }
-        while !self.is_enabled() {}
+        while self.is_port_reset() {}
+    }
+    pub fn is_port_reset(&self) -> bool {
+        self.data.read() & 0x10 !=0
     }
     pub fn is_port_reset_changed(&self) -> bool {
         self.data.read() & 0x200000 != 0
@@ -283,7 +292,7 @@ impl XhciDevice {
                 0b10000000 | 6 << 8 | 0x0100 << 16,
                 (self.buf.len() as u32) << 16,
                 8,
-                2 << 10 | 3 << 16
+                2 << 10 | 3 << 16 | 1 << 6
             ]
         };
         let ptr = self.buf.as_ptr() as u64;
@@ -297,26 +306,15 @@ impl XhciDevice {
         };
         let status_trb = TRB {
             data: [
-                0, 0, 0, 4 << 10
-            ]
-        };
-        let no_op = TRB {
-            data: [
-                0, 0, 0, 1 << 5 | 8 << 10
+                0, 0, 0, 4 << 10 | 1 << 5
             ]
         };
         unsafe {
-            // TR_BUF[self.slot_id as usize].push(setup_trb);
-            // TR_BUF[self.slot_id as usize].push(data_trb);
-            // TR_BUF[self.slot_id as usize].push(status_trb);
-            TR_BUF[self.slot_id as usize].push(no_op);
+            TR_BUF[self.slot_id as usize].push(setup_trb);
+            TR_BUF[self.slot_id as usize].push(data_trb);
+            TR_BUF[self.slot_id as usize].push(status_trb);
         }
-        debug!("called {}", self.slot_id);
-        // xhc.capability.doorbell()[self.slot_id as usize].ring(1, 0);
-
-        unsafe {
-            write_volatile(((xhc.capability.op_base() + xhc.capability.doorbell_offset.read() as u64) as *mut u32).offset(self.slot_id as isize), 1);
-        }
+        xhc.capability.doorbell()[self.slot_id as usize].ring(1, 0);
     }
 }
 
@@ -427,7 +425,7 @@ impl PortStatusChangeEventTRB {
                 xhc.enable_slot(id);
             },
             _ => {
-                error!("{}", make_error!(Code::InvalidPhase));
+                error!("{:?} {}", xhc.port_config_phase[id as usize], make_error!(Code::InvalidPhase));
             }
         }
     }
@@ -602,7 +600,7 @@ struct InterruptRegister {
     event_ring_dequeue_pointer: RW<u64>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConfigPhase {
     NotConnected,
     WaitingAddressed,
@@ -629,11 +627,39 @@ impl XhcController {
             panic!("not surpport 64bit context")
         }
 
+        let ptr = mmio_base + (cap_reg.hcc_params1.read() >> 16 << 2) as u64;
+        let ptr = ptr as *mut u32;
+        let mut val = ptr;
+        loop {
+            if *val & 0xff == 1 {
+                debug!("bios to os: {:x}", *val);
+                if *val >> 24 & 1 == 0 {
+                    let v = (val as u64 + 3) as *mut u8;
+                    debug!("bios to os: {:x}, {:x}", *val, *v);
+                    while *val >> 24 & 1 == 0 || *val >> 16 & 1 == 1 {
+                        *v = 1;
+                    }
+                    debug!("success")
+                }
+                break;
+            }
+            let next = (*val >> 8) & 0xff;
+            if next == 0 {
+                break
+            } else {
+                val = ((val as usize) + ((next as usize) << 2)) as *mut u32
+            }
+        }
+
         let usbsts = cap_reg.usb_status(); // &*((op_base + 0x04) as *const u32);
-
-        assert!(usbsts.hchalted());  // assert USBSTS.HCH == 1
-
         let usbcmd = cap_reg.usb_command();
+
+        // assert!(usbsts.hchalted());  // assert USBSTS.HCH == 1
+        if !usbsts.hchalted() {
+            usbcmd.stop();
+            while !usbsts.hchalted() {}
+        }
+
         usbcmd.set_host_controller_reset(true);  // USBCMD.HCRST = 1
 
         while usbcmd.host_controller_reset() {}  // wait HCRST == 0
@@ -657,8 +683,10 @@ impl XhcController {
 
         let crcr = cap_reg.crcr();
         let ptr = CR_BUF.x.as_ptr() as u64;
-        crcr.set_pointer(ptr);
-        crcr.set_ring_cycle_state(true);
+        assert!(ptr & 0x3f == 0);
+        crcr.set_value(ptr | 1);
+        // crcr.set_pointer(ptr);
+        // crcr.set_ring_cycle_state(true);
 
         let ptr = ER_BUF.x.as_ptr() as u64;
         assert!(ptr & 0x3f == 0);
@@ -727,6 +755,9 @@ impl XhcController {
                 CR_BUF.push(TRB::new_enable_slot_trb());
             }
             self.capability.doorbell()[0].ring(0, 0);
+        } else {
+            error!("{}, {}", port.is_enabled(), port.is_port_reset_changed());
+            error!("{}", make_error!(Code::InvalidPhase));
         }
     }
 
@@ -796,14 +827,6 @@ pub unsafe fn driver_handle_test(mmio_base: u64, device: &Device) {
     let mut xhci = XhcController::initialize(mmio_base);
     xhci.run();
     xhci.configure_port();
-
-    debug!("tr_buf: {:p}", TR_BUF[1].x.as_ptr());
-    debug!("dcbaa: {:p}", DCBAA.x.as_ptr());
-    debug!("ptr: {:p}", DEVICES_MEM[1].device_ctx.slot_ctx.data.as_ptr());
-    debug!("ptr2: {:p}", DEVICES_MEM[1].buf.as_ptr());
-    debug!("doorbell: {:p}", xhci.capability.doorbell().as_ptr());
-
-    debug!("doorbell1: {:p}", &xhci.capability.doorbell()[1] as *const DoorbellRegister);
 
     loop {
         xhci.process_event();

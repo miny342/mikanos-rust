@@ -12,6 +12,5 @@ pub struct FrameBufferConfig {
     pub pixels_per_scan_line: usize,
     pub horizontal_resolution: usize,
     pub vertical_resolution: usize,
-    pub size: usize,
     pub pixel_format: PixelFormat,
 }

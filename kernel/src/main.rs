@@ -83,6 +83,17 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
 
     let xhc_dev = dev.expect("not found: xHC");
 
+    unsafe {
+        let intel_ehc = devices.iter().filter(|d| d.class_code.match3(0x0c, 0x03, 0x20)).any(|d| pci::read_vendor_id(d.bus, d.device, d.func) == 0x8086);
+        if intel_ehc {
+            let superspeed_ports = pci::read_config_reg(xhc_dev, 0xdc);
+            pci::write_config_reg(xhc_dev, 0xd8, superspeed_ports);
+            let ehci2xhci_ports = pci::read_config_reg(xhc_dev, 0xd4);
+            pci::write_config_reg(xhc_dev, 0xd0, ehci2xhci_ports);
+            debug!("switch ehci2xhci: ss = {}, xhci = {}", superspeed_ports, ehci2xhci_ports);
+        }
+    }
+
     info!("xHC has been found: {}.{}.{}", xhc_dev.bus, xhc_dev.device, xhc_dev.func);
 
     let xhc_bar = unsafe {pci::read_bar(xhc_dev, 0)}.unwrap();

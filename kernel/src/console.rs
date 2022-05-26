@@ -1,6 +1,6 @@
 use core::fmt::{self, Write};
 use core::mem::MaybeUninit;
-use core::slice::SliceIndex;
+
 use core::sync::atomic::{AtomicBool, Ordering};
 use spin::{MutexGuard, Mutex};
 

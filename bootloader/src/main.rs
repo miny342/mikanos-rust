@@ -88,7 +88,6 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         pixels_per_scan_line: mode.stride(),
         horizontal_resolution: mode.resolution().0,
         vertical_resolution: mode.resolution().1,
-        size: gop.frame_buffer().size(),
         pixel_format: {
             let n = mode.pixel_format() as usize;
             match n {

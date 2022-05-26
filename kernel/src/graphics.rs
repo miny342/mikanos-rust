@@ -15,11 +15,10 @@ pub enum PixelFormat {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FrameBufferConfig {
-    pub frame_buffer: *mut [u8; 4],
+    pub frame_buffer: *mut u8,
     pub pixels_per_scan_line: usize,
     pub horizontal_resolution: usize,
     pub vertical_resolution: usize,
-    pub size: usize,
     pub pixel_format: PixelFormat,
 }
 
@@ -30,26 +29,36 @@ pub struct PixelColor {
     pub b: u8
 }
 
-fn write_rgb(pos: &mut [u8; 4], c: &PixelColor) {
-    pos[0] = c.r;
-    pos[1] = c.g;
-    pos[2] = c.b;
+fn write_rgb(pos: *mut u8, c: &PixelColor) {
+    // pos[0] = c.r;
+    // pos[1] = c.g;
+    // pos[2] = c.b;
+    unsafe {
+        *(pos.add(0)) = c.r;
+        *(pos.add(1)) = c.g;
+        *(pos.add(2)) = c.b;
+    }
 }
 
-fn write_bgr(pos: &mut [u8; 4], c: &PixelColor) {
-    pos[0] = c.b;
-    pos[1] = c.g;
-    pos[2] = c.r;
+fn write_bgr(pos: *mut u8, c: &PixelColor) {
+    // pos[0] = c.b;
+    // pos[1] = c.g;
+    // pos[2] = c.r;
+    unsafe {
+        *(pos.add(0)) = c.b;
+        *(pos.add(1)) = c.g;
+        *(pos.add(2)) = c.r;
+    }
 }
 
 pub struct PixelWriter {
     // pub config: FrameBufferConfig,
-    frame_buffer: &'static mut [[u8; 4]],
+    frame_buffer: *mut u8,
     pixels_per_scan_line: usize,
     horizontal_resolution: usize,
     vertical_resolution: usize,
     pixel_format: PixelFormat,
-    write_: fn(pos: &mut [u8; 4], c: &PixelColor),
+    write_: fn(pos: *mut u8, c: &PixelColor),
 }
 
 static mut WRITER: MaybeUninit<Mutex<PixelWriter>> = MaybeUninit::<Mutex<PixelWriter>>::uninit();
@@ -62,10 +71,8 @@ impl PixelWriter {
             PixelFormat::Bgr => write_bgr,
             _ => panic!("can't use this writer")
         };
-        assert!(config.size % 4 == 0);
-        assert!(config.size == config.vertical_resolution * config.horizontal_resolution * 4);
         PixelWriter {
-            frame_buffer: &mut *slice_from_raw_parts_mut(config.frame_buffer, config.size / 4),
+            frame_buffer: config.frame_buffer, // &mut *slice_from_raw_parts_mut(config.frame_buffer, config.vertical_resolution * config.horizontal_resolution),
             pixels_per_scan_line: config.pixels_per_scan_line,
             horizontal_resolution: config.horizontal_resolution,
             vertical_resolution: config.vertical_resolution,
@@ -101,6 +108,9 @@ impl PixelWriter {
         if x >= self.horizontal_resolution || y >= self.vertical_resolution {
             return;
         }
-        (self.write_)(&mut self.frame_buffer[self.pixels_per_scan_line * y + x], c);
+        unsafe {
+            (self.write_)(self.frame_buffer.add(4* (self.pixels_per_scan_line * y + x)), c);
+        }
+        
     }
 }
