@@ -8,7 +8,7 @@ use crate::graphics::*;
 use crate::font::*;
 
 const ROW: usize = 45;
-const COL: usize = 150;
+const COL: usize = 100;
 const MARGIN: usize = 4;
 
 #[macro_export]
