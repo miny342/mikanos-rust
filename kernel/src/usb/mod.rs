@@ -5,7 +5,7 @@ use core::slice::from_raw_parts_mut;
 use volatile_register::{RW, RO, WO};
 use heapless::FnvIndexMap;
 
-use crate::{println, debug, make_error, error};
+use crate::{println, debug, make_error, error, print};
 use crate::pci::Device;
 use crate::error::*;
 
@@ -214,12 +214,11 @@ struct MemPool {
 static mut DCBAA: MemPool = MemPool { x: [0; max_slots_en as usize + 1] };
 
 #[derive(Debug, Clone, Copy)]
-#[repr(C)]
-struct SetupData {
-    request: u16,
-    value: u16,
-    index: u16,
-    length: u16
+struct ClassDriver {
+    class: u16,
+    sub_class: u16,
+    protocol: u16,
+    interface: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -268,6 +267,8 @@ struct XhciDevice {
     doorbell: *mut DoorbellRegister,
     num_configuration: u8,
     max_packet_size: u16,
+    classes: [ClassDriver; 15],
+    default: usize,  // default class driver (boot protocol)
 }
 
 impl XhciDevice {
@@ -312,6 +313,43 @@ impl XhciDevice {
         }
         self.doorbell().ring(1, 0);
     }
+    fn set_protocol_boot(&mut self) {
+        let driver = match self.classes.iter().enumerate().filter(|(_x, y)| y.class == 3 && y.sub_class == 1).next() {
+            Some(x) => x,
+            None => return,
+        };
+        self.default = driver.0;
+        let setup_trb = TRB {
+            data: [
+                0b00100001 | 11 << 8,
+                driver.1.interface as u32,
+                8,
+                2 << 10 | 1 << 6
+            ]
+        };
+        let ptr = self.buf.as_ptr() as u64;
+        let data_trb = TRB {
+            data: [
+                (ptr & 0xffffffff) as u32,
+                (ptr >> 32) as u32,
+                (self.buf.len() as u32),
+                3 << 10,
+            ]
+        };
+        let status_trb = TRB {
+            data: [
+                0, 0, 0, 4 << 10 | 1 << 5 | 1 << 16
+            ]
+        };
+        unsafe {
+            let ptr = &mut TR_BUF[self.slot_id as usize][0];
+            ptr.push(setup_trb);
+            ptr.push(data_trb);
+            SETUP_TRB_MAP.insert(ptr.center() as *const TRB as u64, setup_trb).unwrap();
+            ptr.push(status_trb);
+        }
+        self.doorbell().ring(1, 0);
+    }
 }
 
 static mut DEVICES_MEM: [XhciDevice; (max_slots_en + 1) as usize] = [
@@ -340,6 +378,8 @@ static mut DEVICES_MEM: [XhciDevice; (max_slots_en + 1) as usize] = [
         doorbell: 0 as *mut DoorbellRegister,
         num_configuration: 0,
         max_packet_size: 0,
+        classes: [ClassDriver { class: 0, sub_class: 0, protocol: 0, interface: 0 }; 15],
+        default: 0
     }; (max_slots_en + 1) as usize
 ];
 
@@ -381,7 +421,7 @@ impl TRB {
     pub fn new_link_trb(ptr: u64) -> TRB {
         TRB {
             data: [
-                (ptr & 0xfffffff0) as u32, (ptr >> 32) as u32, 0, 6 << 10
+                (ptr & 0xfffffff0) as u32, (ptr >> 32) as u32, 0, 6 << 10 | 1 << 1
             ]
         }
     }
@@ -471,7 +511,10 @@ impl CommandCompletionEventTRB {
                 xhc.initialize_device(self.slot_id(), port_id);
             }
         } else if ty == 12 { // configure endpoint command
-
+            unsafe {
+                let dev = &mut DEVICES_MEM[self.slot_id() as usize];
+                dev.set_protocol_boot();
+            }
         } else {
             error!("{}", make_error!(Code::NotImplemented))
         }
@@ -497,6 +540,19 @@ impl TransferEventTRB {
     fn slot_id(&self) -> u8 {
         (self.data[1] >> 24) as u8
     }
+    unsafe fn set_normal_trb(&self, dev: &mut XhciDevice) {
+        let dci = (dev.default + 1) * 2 + 1;  // default driver interrupt in
+        let ptr = dev.buf.as_ptr() as u64;
+        TR_BUF[self.slot_id() as usize][dci - 1].push(TRB {
+            data: [
+                (ptr & 0xffffffff) as u32,
+                (ptr >> 32) as u32,
+                (dev.buf.len() as u32) | 0 << 22,
+                1 << 10 | 1 << 5
+            ]
+        });
+        dev.doorbell().ring(dci as u8, 0);
+    }
     pub unsafe fn on_event(&self, xhc: &mut XhcController) {
         let req = (self.ptr().data[0] >> 8) & 0xff;
         let dev = &mut DEVICES_MEM[self.slot_id() as usize];
@@ -504,7 +560,19 @@ impl TransferEventTRB {
         debug!("data: {:?}", self.ptr().data);
         let trb = match SETUP_TRB_MAP.remove(&self.trb_ptr) {
             Some(x) => x,
-            None => return
+            None => {
+                if self.ptr().data[3] >> 10 & 0x3f == 1 {
+                    print!("transfer: ");
+                    for i in 0..10 {
+                        print!("{:0>2x},", dev.buf[i]);
+                    }
+                    println!("");
+                    self.set_normal_trb(dev);
+                } else {
+                    error!("{}", make_error!(Code::NotImplemented))
+                }
+                return;
+            }
         };
         debug!("trb: {:?}", trb);
         if (trb.data[0] >> 8) & 0xff == 6 && (trb.data[0] >> 16) == 0x0100 { // get_descriptor device
@@ -542,7 +610,11 @@ impl TransferEventTRB {
 
                     },
                     4 => { // INTERFACE
-
+                        let idx = buf[2] as usize;
+                        dev.classes[idx].class = buf[5] as u16;
+                        dev.classes[idx].sub_class = buf[6] as u16;
+                        dev.classes[idx].protocol = buf[7] as u16;
+                        dev.classes[idx].interface = buf[8] as u16;
                     },
                     5 => { // ENDPOINT
                         let dci = (buf[2] & 0b111) * 2 + (buf[2] >> 7);
@@ -565,7 +637,7 @@ impl TransferEventTRB {
                             b_interval << 16,
                             ep_type << 3 | w_max_packet_size << 16 | 3 << 1,
                             (ptr & 0xffffffff) as u32 | 1,
-                            (ptr >> 16) as u32,
+                            (ptr >> 32) as u32,
                             0,
                             0,
                             0,
@@ -593,37 +665,11 @@ impl TransferEventTRB {
                 ]
             });
             xhc.capability.doorbell()[0].ring(0, 0);
+        } else if (trb.data[0] >> 8) & 0xff == 11 {
+            self.set_normal_trb(dev);
+        } else {
+            error!("{}", make_error!(Code::NotImplemented))
         }
-
-
-        // let setup_trb = TRB {
-        //     data: [
-        //         0b10000000 | 6 << 8 | 0x0100 << 16,
-        //         (self.buf.len() as u32) << 16,
-        //         8,
-        //         2 << 10 | 3 << 16 | 1 << 6
-        //     ]
-        // };
-        // let ptr = self.buf.as_ptr() as u64;
-        // let data_trb = TRB {
-        //     data: [
-        //         (ptr & 0xffffffff) as u32,
-        //         (ptr >> 32) as u32,
-        //         (self.buf.len() as u32),
-        //         1 << 16 | 1 << 5 | 3 << 10,
-        //     ]
-        // };
-        // let status_trb = TRB {
-        //     data: [
-        //         0, 0, 0, 4 << 10
-        //     ]
-        // };
-        // unsafe {
-        //     TR_BUF[self.slot_id as usize].push(setup_trb);
-        //     TR_BUF[self.slot_id as usize].push(data_trb);
-        //     TR_BUF[self.slot_id as usize].push(status_trb);
-        // }
-        // xhc.capability.doorbell()[self.slot_id as usize].ring(1, 0);
     }
 }
 
@@ -723,7 +769,7 @@ impl MemPoolTrTRB {
         self.index += 1;
         if self.index == TRB_BUF_LEN - 1 {
             let mut link = TRB::new_link_trb(self.x.as_ptr() as u64);
-            link.data[3] = link.data[3] | (self.cycle as u32);
+            link.data[3] = (link.data[3] & !0x1) | (self.cycle as u32);
             for i in 0..4 {
                 self.x[self.index].data[i] = link.data[i];
             }
@@ -954,7 +1000,7 @@ impl XhcController {
     }
 
     pub fn process_event(&mut self) {
-        while let Some(trb) = unsafe { ER_BUF.next() } {
+        if let Some(trb) = unsafe { ER_BUF.next() } {
             let v1 = trb.data[0];
             let v2 = trb.data[1];
             let v3 = trb.data[2];
@@ -972,8 +1018,9 @@ impl XhcController {
             } else {
                 error!("{}", make_error!(Code::NotImplemented))
             }
+            unsafe { ER_BUF.clean(self) }
         }
-        unsafe { ER_BUF.clean(self) }
+
     }
 }
 
