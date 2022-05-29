@@ -557,16 +557,54 @@ impl TransferEventTRB {
         let req = (self.ptr().data[0] >> 8) & 0xff;
         let dev = &mut DEVICES_MEM[self.slot_id() as usize];
         // debug!("transfer: {:?}", DEVICES_MEM[self.slot_id() as usize].buf);
-        debug!("data: {:?}", self.ptr().data);
+        // debug!("data: {:?}", self.ptr().data);
         let trb = match SETUP_TRB_MAP.remove(&self.trb_ptr) {
             Some(x) => x,
             None => {
                 if self.ptr().data[3] >> 10 & 0x3f == 1 {
-                    print!("transfer: ");
-                    for i in 0..10 {
-                        print!("{:0>2x},", dev.buf[i]);
+                    if dev.classes[dev.default].protocol == 2 { // mouse
+                        print!("transfer: ");
+                        for i in 0..10 {
+                            print!("{:0>2x},", dev.buf[i]);
+                        }
+                        println!("");
+                    } else if dev.classes[dev.default].protocol == 1 {  // keyboard
+                        static mut PREV: [u8; 8] = [0; 8];
+                        let modifire_diff = PREV[0] ^ dev.buf[0];
+                        let pressed = {
+                            let mut v = [0u8; 6];
+                            let mut iter = v.iter_mut();
+                            for k in &dev.buf[2..8] {
+                                if *k == 0 || PREV[2..].iter().any(|p| *p == *k) {
+                                    continue;
+                                }
+                                let s = iter.next().unwrap();
+                                *s = *k;
+                            };
+                            v
+                        };
+                        let released = {
+                            let mut v = [0u8; 6];
+                            let mut iter = v.iter_mut();
+                            for k in &PREV[2..] {
+                                if *k == 0 || dev.buf[2..8].iter().any(|p| *p == *k) {
+                                    continue;
+                                }
+                                let s = iter.next().unwrap();
+                                *s = *k;
+                            };
+                            v
+                        };
+                        for (a, b) in PREV.iter_mut().zip(dev.buf.iter()) {
+                            *a = *b;
+                        }
+                        if pressed[0] != 0 {
+                            debug!("pressed: {}", pressed[0]);
+                        }
+                        if released[0] != 0 {
+                            debug!("released: {}", released[0]);
+                        }
                     }
-                    println!("");
                     self.set_normal_trb(dev);
                 } else {
                     error!("{}", make_error!(Code::NotImplemented))
@@ -1005,7 +1043,7 @@ impl XhcController {
             let v2 = trb.data[1];
             let v3 = trb.data[2];
             let v4 = trb.data[3];
-            debug!("{:x} {:x} {:x} {:x}", v1, v2, v3, v4);
+            // debug!("{:x} {:x} {:x} {:x}", v1, v2, v3, v4);
             if let Some(casted) = trb.cast::<PortStatusChangeEventTRB>() {
                 casted.on_event(self)
             } else if let Some(casted) = trb.cast::<CommandCompletionEventTRB>() {
