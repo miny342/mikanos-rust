@@ -103,9 +103,11 @@ impl Console {
                         writer.write(j * 8 + x + MARGIN, i * 16 + y + MARGIN, &self.bg)
                     }
                 }
-                let c = self.buf[i + 1][j];
+                // let c = self.buf[i + 1][j];
+                let c = unsafe { *self.buf.get_unchecked(i + 1).get_unchecked(j) };
                 write_ascii(writer, j * 8 + MARGIN, i * 16 + MARGIN, c, &self.color);
-                self.buf[i][j] = c;
+                // self.buf[i][j] = c;
+                unsafe { *self.buf.get_unchecked_mut(i).get_unchecked_mut(j) = c; }
             }
         }
         for i in 0..self.column {
