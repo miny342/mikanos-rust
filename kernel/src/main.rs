@@ -11,6 +11,7 @@ mod pci;
 mod error;
 mod logger;
 mod usb;
+mod mouse;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -35,7 +36,7 @@ fn keyboard_handler(modifire: u8, pressing: [u8; 6]) {
 }
 
 fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
-
+    mouse::CURSOR.lock().move_relative(move_x, move_y)
 }
 
 #[no_mangle]
