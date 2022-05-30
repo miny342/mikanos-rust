@@ -18,7 +18,6 @@ use core::panic::PanicInfo;
 use crate::graphics::*;
 use crate::console::*;
 use crate::logger::*;
-use crate::usb::driver_handle_test;
 
 
 #[panic_handler]
@@ -29,6 +28,14 @@ fn panic(info: &PanicInfo) -> ! {
             asm!("hlt");
         }
     }
+}
+
+fn keyboard_handler(modifire: u8, pressing: [u8; 6]) {
+
+}
+
+fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
+
 }
 
 #[no_mangle]
@@ -101,7 +108,16 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
     let xhc_mmio_base = xhc_bar & !0xf;
     debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
 
-    unsafe { driver_handle_test(xhc_mmio_base, xhc_dev); }
+    let mut xhc = unsafe {
+        usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse_handler)
+    };
+    xhc.run();
+    xhc.configure_port();
+
+    loop {
+        xhc.process_event();
+    }
+
 
     loop {
         unsafe {

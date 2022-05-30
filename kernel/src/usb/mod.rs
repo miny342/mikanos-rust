@@ -1,7 +1,9 @@
 use core::intrinsics::transmute;
 use core::ptr::{slice_from_raw_parts_mut, write_volatile};
 use core::slice::from_raw_parts_mut;
+use core::sync::atomic::{AtomicU8, Ordering};
 
+use spin::Mutex;
 use volatile_register::{RW, RO, WO};
 use heapless::FnvIndexMap;
 
@@ -95,8 +97,8 @@ struct HostControllerRuntimeRegister {
 }
 
 impl HostControllerRuntimeRegister {
-    pub unsafe fn interrupt_set(&self) -> &mut [InterruptRegister] {
-        from_raw_parts_mut(((self as *const HostControllerRuntimeRegister as u64) + 0x20) as *mut InterruptRegister, 1024)
+    pub fn interrupt_set(&self) -> &mut [InterruptRegister] {
+        unsafe { from_raw_parts_mut(((self as *const HostControllerRuntimeRegister as u64) + 0x20) as *mut InterruptRegister, 1024) }
     }
 }
 
@@ -211,7 +213,7 @@ struct MemPool {
     x: [u64; max_slots_en as usize + 1]
 }
 
-static mut DCBAA: MemPool = MemPool { x: [0; max_slots_en as usize + 1] };
+static DCBAA: Mutex<MemPool> = Mutex::new(MemPool { x: [0; max_slots_en as usize + 1] });
 
 #[derive(Debug, Clone, Copy)]
 struct ClassDriver {
@@ -264,7 +266,7 @@ struct XhciDevice {
     input_ctx: InputContext,
     slot_id: u8,
     buf: [u8; 512],
-    doorbell: *mut DoorbellRegister,
+    doorbell: u64,
     num_configuration: u8,
     max_packet_size: u16,
     classes: [ClassDriver; 15],
@@ -273,10 +275,10 @@ struct XhciDevice {
 
 impl XhciDevice {
     fn doorbell(&self) -> &'static mut DoorbellRegister {
-        if self.doorbell as u64 == 0 {
+        if self.doorbell == 0 {
             panic!("doorbell is not initialized")
         }
-        unsafe { &mut *(self.doorbell) }
+        unsafe { &mut *(self.doorbell as *mut DoorbellRegister) }
     }
     fn start_init(&mut self) {
         self.get_descriptor(1, 0);
@@ -304,13 +306,13 @@ impl XhciDevice {
                 0, 0, 0, 4 << 10 | 1 << 5
             ]
         };
-        unsafe {
-            let ptr = &mut TR_BUF[self.slot_id as usize][0];
-            ptr.push(setup_trb);
-            ptr.push(data_trb);
-            SETUP_TRB_MAP.insert(ptr.center() as *const TRB as u64, setup_trb).unwrap();
-            ptr.push(status_trb);
-        }
+
+        let ptr = &mut TR_BUF[self.slot_id as usize][0].lock();
+        ptr.push(setup_trb);
+        ptr.push(data_trb);
+        SETUP_TRB_MAP.lock().insert(ptr.center() as *const TRB as u64, setup_trb).unwrap();
+        ptr.push(status_trb);
+
         self.doorbell().ring(1, 0);
     }
     fn set_protocol_boot(&mut self) {
@@ -341,47 +343,57 @@ impl XhciDevice {
                 0, 0, 0, 4 << 10 | 1 << 5 | 1 << 16
             ]
         };
-        unsafe {
-            let ptr = &mut TR_BUF[self.slot_id as usize][0];
-            ptr.push(setup_trb);
-            ptr.push(data_trb);
-            SETUP_TRB_MAP.insert(ptr.center() as *const TRB as u64, setup_trb).unwrap();
-            ptr.push(status_trb);
-        }
+
+        let ptr = &mut TR_BUF[self.slot_id as usize][0].lock();
+        ptr.push(setup_trb);
+        ptr.push(data_trb);
+        SETUP_TRB_MAP.lock().insert(ptr.center() as *const TRB as u64, setup_trb).unwrap();
+        ptr.push(status_trb);
+
         self.doorbell().ring(1, 0);
     }
 }
 
-static mut DEVICES_MEM: [XhciDevice; (max_slots_en + 1) as usize] = [
-    XhciDevice {
-        device_ctx: DeviceContext {
-            slot_ctx: SlotContext {
-                data: [0; 8]
+type DeviceMemType = [Mutex<XhciDevice>; (max_slots_en + 1) as usize];
+
+const unsafe fn device_mem_init() -> DeviceMemType {
+    let mut arr = core::mem::MaybeUninit::<DeviceMemType>::uninit().assume_init();
+    let mut outer = 0;
+    while outer < (max_slots_en + 1) as usize {
+        arr[outer] = Mutex::new(XhciDevice {
+            device_ctx: DeviceContext {
+                slot_ctx: SlotContext {
+                    data: [0; 8]
+                },
+                ep_ctx: [EndpointContext {
+                    data: [0; 8]
+                }; 31]
             },
-            ep_ctx: [EndpointContext {
-                data: [0; 8]
-            }; 31]
-        },
-        input_ctx: InputContext {
-            input_control_ctx: InputControlContext {
-                data: [0; 8]
+            input_ctx: InputContext {
+                input_control_ctx: InputControlContext {
+                    data: [0; 8]
+                },
+                slot_ctx: SlotContext {
+                    data: [0; 8]
+                },
+                ep_ctx: [EndpointContext {
+                    data: [0; 8]
+                }; 31]
             },
-            slot_ctx: SlotContext {
-                data: [0; 8]
-            },
-            ep_ctx: [EndpointContext {
-                data: [0; 8]
-            }; 31]
-        },
-        slot_id: 0,
-        buf: [0; 512],
-        doorbell: 0 as *mut DoorbellRegister,
-        num_configuration: 0,
-        max_packet_size: 0,
-        classes: [ClassDriver { class: 0, sub_class: 0, protocol: 0, interface: 0 }; 15],
-        default: 0
-    }; (max_slots_en + 1) as usize
-];
+            slot_id: 0,
+            buf: [0; 512],
+            doorbell: 0,
+            num_configuration: 0,
+            max_packet_size: 0,
+            classes: [ClassDriver { class: 0, sub_class: 0, protocol: 0, interface: 0 }; 15],
+            default: 0
+        });
+        outer += 1;
+    }
+    arr
+}
+
+static DEVICES_MEM: DeviceMemType = unsafe { device_mem_init() } ;
 
 trait TRBtrait {
     const TY: u32;
@@ -454,7 +466,7 @@ impl PortStatusChangeEventTRB {
         match xhc.port_config_phase[id as usize] {
             ConfigPhase::NotConnected => {
                 if port.is_connected() {
-                    unsafe {xhc.reset_port(id);}
+                    xhc.reset_port(id);
                 }
             },
             ConfigPhase::ResettingPort => {
@@ -491,37 +503,34 @@ impl CommandCompletionEventTRB {
             if xhc.port_config_phase[xhc.addressing_port as usize] != ConfigPhase::EnablingSlot {
                 panic!()
             }
-            unsafe { xhc.address_deivce(self.slot_id(), xhc.addressing_port); }
+            xhc.address_deivce(self.slot_id(), xhc.addressing_port);
         } else if ty == 11 { // address device command
-            unsafe {
-                let dev = &DEVICES_MEM[self.slot_id() as usize];
-                let port_id = dev.device_ctx.slot_ctx.root_hub_port_num();
-                if port_id != xhc.addressing_port || xhc.port_config_phase[port_id as usize] != ConfigPhase::AddressingDevice {
-                    panic!()
-                }
-
-                xhc.addressing_port = 0;
-                if let Some(next_port_id) = xhc.port_config_phase.iter().enumerate().filter(|x| *x.1 == ConfigPhase::WaitingAddressed).next() {
-                    let port = xhc.capability.port_sc(next_port_id.0 as u8);
-                    if port.is_connected() {
-                        xhc.reset_port(next_port_id.0 as u8)
-                    }
-                }
-
-                xhc.initialize_device(self.slot_id(), port_id);
+            let dev = &mut DEVICES_MEM[self.slot_id() as usize].lock();
+            let port_id = dev.device_ctx.slot_ctx.root_hub_port_num();
+            if port_id != xhc.addressing_port || xhc.port_config_phase[port_id as usize] != ConfigPhase::AddressingDevice {
+                panic!()
             }
+
+            xhc.addressing_port = 0;
+            if let Some(next_port_id) = xhc.port_config_phase.iter().enumerate().filter(|x| *x.1 == ConfigPhase::WaitingAddressed).next() {
+                let port = xhc.capability.port_sc(next_port_id.0 as u8);
+                if port.is_connected() {
+                    xhc.reset_port(next_port_id.0 as u8)
+                }
+            }
+
+            xhc.port_config_phase[port_id as usize] = ConfigPhase::InitializingDevice;
+            dev.start_init();
         } else if ty == 12 { // configure endpoint command
-            unsafe {
-                let dev = &mut DEVICES_MEM[self.slot_id() as usize];
-                dev.set_protocol_boot();
-            }
+            let dev = &mut DEVICES_MEM[self.slot_id() as usize].lock();
+            dev.set_protocol_boot();
         } else {
             error!("{}", make_error!(Code::NotImplemented))
         }
     }
 }
 
-static mut SETUP_TRB_MAP: FnvIndexMap<u64, TRB, 32> = FnvIndexMap::new();
+static SETUP_TRB_MAP: Mutex<FnvIndexMap<u64, TRB, 32>> = Mutex::new(FnvIndexMap::new());
 
 #[repr(C)]
 struct TransferEventTRB {
@@ -540,10 +549,10 @@ impl TransferEventTRB {
     fn slot_id(&self) -> u8 {
         (self.data[1] >> 24) as u8
     }
-    unsafe fn set_normal_trb(&self, dev: &mut XhciDevice) {
+    fn set_normal_trb(&self, dev: &mut XhciDevice) {
         let dci = (dev.default + 1) * 2 + 1;  // default driver interrupt in
         let ptr = dev.buf.as_ptr() as u64;
-        TR_BUF[self.slot_id() as usize][dci - 1].push(TRB {
+        TR_BUF[self.slot_id() as usize][dci - 1].lock().push(TRB {
             data: [
                 (ptr & 0xffffffff) as u32,
                 (ptr >> 32) as u32,
@@ -553,57 +562,57 @@ impl TransferEventTRB {
         });
         dev.doorbell().ring(dci as u8, 0);
     }
-    pub unsafe fn on_event(&self, xhc: &mut XhcController) {
-        let req = (self.ptr().data[0] >> 8) & 0xff;
-        let dev = &mut DEVICES_MEM[self.slot_id() as usize];
+    pub fn on_event(&self, xhc: &mut XhcController) {
+        let dev = &mut DEVICES_MEM[self.slot_id() as usize].lock();
         // debug!("transfer: {:?}", DEVICES_MEM[self.slot_id() as usize].buf);
         // debug!("data: {:?}", self.ptr().data);
-        let trb = match SETUP_TRB_MAP.remove(&self.trb_ptr) {
+        let trb = match SETUP_TRB_MAP.lock().remove(&self.trb_ptr) {
             Some(x) => x,
             None => {
                 if self.ptr().data[3] >> 10 & 0x3f == 1 {
                     if dev.classes[dev.default].protocol == 2 { // mouse
-                        print!("transfer: ");
-                        for i in 0..10 {
-                            print!("{:0>2x},", dev.buf[i]);
-                        }
-                        println!("");
+                        // print!("transfer: ");
+                        // for i in 0..10 {
+                        //     print!("{:0>2x},", dev.buf[i]);
+                        // }
+                        // println!("");
+                        (xhc.mouse_handler)(dev.buf[0], dev.buf[1] as i8, dev.buf[2] as i8)
                     } else if dev.classes[dev.default].protocol == 1 {  // keyboard
-                        static mut PREV: [u8; 8] = [0; 8];
-                        let modifire_diff = PREV[0] ^ dev.buf[0];
-                        let pressed = {
-                            let mut v = [0u8; 6];
-                            let mut iter = v.iter_mut();
-                            for k in &dev.buf[2..8] {
-                                if *k == 0 || PREV[2..].iter().any(|p| *p == *k) {
-                                    continue;
-                                }
-                                let s = iter.next().unwrap();
-                                *s = *k;
-                            };
-                            v
-                        };
-                        let released = {
-                            let mut v = [0u8; 6];
-                            let mut iter = v.iter_mut();
-                            for k in &PREV[2..] {
-                                if *k == 0 || dev.buf[2..8].iter().any(|p| *p == *k) {
-                                    continue;
-                                }
-                                let s = iter.next().unwrap();
-                                *s = *k;
-                            };
-                            v
-                        };
-                        for (a, b) in PREV.iter_mut().zip(dev.buf.iter()) {
-                            *a = *b;
-                        }
-                        if pressed[0] != 0 {
-                            debug!("pressed: {}", pressed[0]);
-                        }
-                        if released[0] != 0 {
-                            debug!("released: {}", released[0]);
-                        }
+                        // static PREV: Mutex<[u8; 8]> = Mutex::new([0; 8]);
+                        // static PRESSING: AtomicU8 = AtomicU8::new(0);
+                        // let mut prev = PREV.lock();
+                        // let pressed = {
+                        //     let mut v = 0u8;
+                        //     for k in &dev.buf[2..8] {
+                        //         if *k == 0 || prev[2..].iter().any(|p| *p == *k) {
+                        //             continue;
+                        //         }
+                        //         v = *k;
+                        //     };
+                        //     v
+                        // };
+                        // let released = {
+                        //     let mut v = 0u8;
+                        //     for k in &prev[2..] {
+                        //         if *k == 0 || dev.buf[2..8].iter().any(|p| *p == *k) {
+                        //             continue;
+                        //         }
+                        //         v = *k;
+                        //     };
+                        //     v
+                        // };
+                        // if pressed != 0 {
+                        //     PRESSING.store(pressed, Ordering::Relaxed)
+                        // }
+                        // if released == PRESSING.load(Ordering::Relaxed) {
+                        //     PRESSING.store(0, Ordering::Relaxed)
+                        // }
+                        // for (a, b) in prev.iter_mut().zip(dev.buf.iter()) {
+                        //     *a = *b;
+                        // }
+                        let mut arr = [0; 6];
+                        arr.clone_from_slice(&dev.buf[2..8]);
+                        (xhc.keyboard_handler)(dev.buf[0], arr);
                     }
                     self.set_normal_trb(dev);
                 } else {
@@ -638,16 +647,14 @@ impl TransferEventTRB {
             let max = dev.buf[2] as usize;
             while base < max {
                 let ty = dev.buf[base + 1];
-                let buf = from_raw_parts_mut(&mut dev.buf[base] as *mut u8, dev.buf[base] as usize);
+                let buf = unsafe { from_raw_parts_mut(&mut dev.buf[base] as *mut u8, dev.buf[base] as usize) };
                 debug!("scaning buf: {:?}", buf);
                 match ty {
                     2 => { // CONFIGURATION
-
-                    },
-                    3 => { // STRING
-
+                        debug!("configuration found");
                     },
                     4 => { // INTERFACE
+                        debug!("interface found");
                         let idx = buf[2] as usize;
                         dev.classes[idx].class = buf[5] as u16;
                         dev.classes[idx].sub_class = buf[6] as u16;
@@ -655,10 +662,11 @@ impl TransferEventTRB {
                         dev.classes[idx].interface = buf[8] as u16;
                     },
                     5 => { // ENDPOINT
+                        debug!("endpoint found");
                         let dci = (buf[2] & 0b111) * 2 + (buf[2] >> 7);
                         debug!("buf[2] & 0b111: {}, buf[2] >> 7: {}", buf[2] & 0b111, buf[2] >> 7);
                         dev.input_ctx.input_control_ctx.data[1] |= 1 << (dci as u32);
-                        let ptr = TR_BUF[self.slot_id() as usize][dci as usize - 1].x.as_ptr() as u64;
+                        let ptr = TR_BUF[self.slot_id() as usize][dci as usize - 1].lock().x.as_ptr() as u64;
                         let ep_type = match (buf[2] >> 7, buf[3] & 0b11) {
                             (0, 1) => 1u32,
                             (0, 2) => 2,
@@ -683,10 +691,10 @@ impl TransferEventTRB {
                         ];
                     },
                     33 => { // HID
-
+                        debug!("hid found");
                     },
-                    _ => {
-                        todo!()
+                    x => {
+                        debug!("unknown field: {} found", x);
                     }
                 }
                 base += dev.buf[base] as usize;
@@ -694,7 +702,7 @@ impl TransferEventTRB {
             debug!("input context control: {:?}", dev.input_ctx.input_control_ctx.data);
             let ptr = dev.input_ctx.input_control_ctx.data.as_ptr() as u64;
             assert!(ptr & 0x3f == 0);
-            CR_BUF.push(TRB {
+            CR_BUF.lock().push(TRB {
                 data: [
                     (ptr & 0xffffffff) as u32,
                     (ptr >> 32) as u32,
@@ -739,7 +747,7 @@ impl MemPoolCrTRB {
     }
 }
 
-static mut CR_BUF: MemPoolCrTRB = MemPoolCrTRB { x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true };
+static CR_BUF: Mutex<MemPoolCrTRB> = Mutex::new(MemPoolCrTRB { x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true });
 
 #[repr(C, packed)]
 struct EventRingSegmentTableEntry {
@@ -754,7 +762,7 @@ struct MemPoolERSTE {
     x: [EventRingSegmentTableEntry; 1]
 }
 
-static mut ERSTE_BUF: MemPoolERSTE = MemPoolERSTE { x: [EventRingSegmentTableEntry { addr: 0, size: 0, rsvdz1: 0, rsvdz2: 0 }; 1] };
+static ERSTE_BUF: Mutex<MemPoolERSTE> = Mutex::new(MemPoolERSTE { x: [EventRingSegmentTableEntry { addr: 0, size: 0, rsvdz1: 0, rsvdz2: 0 }; 1] });
 
 #[repr(C, align(64))]
 struct MemPoolErTRB {
@@ -764,7 +772,7 @@ struct MemPoolErTRB {
 }
 
 impl MemPoolErTRB {
-    pub unsafe fn next(&mut self) -> Option<&TRB> {
+    pub fn next(&mut self) -> Option<&TRB> {
         let v = &self.x[self.index];
         if v.cycle() == self.cycle {
             if self.index == TRB_BUF_LEN - 1 {
@@ -778,14 +786,16 @@ impl MemPoolErTRB {
             None
         }
     }
-    pub unsafe fn clean(&self, xhc: &XhcController) {
-        let interrupt_reg = xhc.capability.runtime().interrupt_set();
-        let p = interrupt_reg[0].event_ring_dequeue_pointer.read() & 0xf;
-        interrupt_reg[0].event_ring_dequeue_pointer.write(p | (&self.x[self.index] as *const TRB as u64));
+    pub fn clean(&self, xhc: &XhcController) {
+        unsafe {
+            let interrupt_reg = xhc.capability.runtime().interrupt_set();
+            let p = interrupt_reg[0].event_ring_dequeue_pointer.read() & 0xf;
+            interrupt_reg[0].event_ring_dequeue_pointer.write(p | (&self.x[self.index] as *const TRB as u64));
+        }
     }
 }
 
-static mut ER_BUF: MemPoolErTRB = MemPoolErTRB { x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true };
+static ER_BUF: Mutex<MemPoolErTRB> = Mutex::new(MemPoolErTRB { x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true });
 
 #[derive(Clone, Copy)]
 #[repr(C, align(64))]
@@ -817,13 +827,26 @@ impl MemPoolTrTRB {
     }
 }
 
-static mut TR_BUF: [[MemPoolTrTRB; 32]; (max_slots_en + 1) as usize] = [
-    [
-        MemPoolTrTRB {
-            x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true
-        }; 32
-    ]; (max_slots_en + 1) as usize
-];
+type TrBufType = [[Mutex<MemPoolTrTRB>; 32]; (max_slots_en + 1) as usize];
+
+const unsafe fn init_tr_buf() -> TrBufType {
+    let mut arr = core::mem::MaybeUninit::<TrBufType>::uninit().assume_init();
+    let mut outer = 0;
+    let mut inner;
+    while outer < (max_slots_en + 1) as usize {
+        inner = 0;
+        while inner < 32 {
+            arr[outer][inner] = Mutex::new(MemPoolTrTRB {
+                x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true
+            });
+            inner += 1;
+        }
+        outer += 1;
+    }
+    arr
+}
+
+static TR_BUF: TrBufType = unsafe { init_tr_buf() };
 
 
 #[repr(C)]
@@ -848,19 +871,21 @@ enum ConfigPhase {
     Configured,
 }
 
-struct XhcController {
+pub struct XhcController {
     capability: &'static CapabilityRegisters,
     port_config_phase: [ConfigPhase; 256],
     addressing_port: u8,
+    keyboard_handler: fn(modifire: u8, pressing: [u8; 6]),
+    mouse_handler: fn(modifire: u8, move_x: i8, move_y: i8),
 }
 
 impl XhcController {
-    pub unsafe fn initialize(mmio_base: u64) -> XhcController {
+    pub unsafe fn initialize(mmio_base: u64, keyboard_handler: fn(u8, [u8; 6]), mouse_handler: fn(u8, i8, i8)) -> XhcController {
         let cap_reg = &*(mmio_base as *const CapabilityRegisters);
         debug!("cap reg: {}", cap_reg.length());
 
         if cap_reg.hcc_params1.read() & 0b100 != 0 {
-            panic!("not surpport 64bit context")
+            panic!("not support 64bit context now")
         }
 
         let ptr = mmio_base + (cap_reg.hcc_params1.read() >> 16 << 2) as u64;
@@ -914,26 +939,27 @@ impl XhcController {
         config_reg.set_max_slots_en(max_slots_en);
 
         let dcbaap = cap_reg.dcbaap();
-        let ptr = DCBAA.x.as_ptr() as u64;
+        let ptr = DCBAA.lock().x.as_ptr() as u64;
         dcbaap.set_dcbaap(ptr);
 
         let crcr = cap_reg.crcr();
-        let ptr = CR_BUF.x.as_ptr() as u64;
+        let ptr = CR_BUF.lock().x.as_ptr() as u64;
         assert!(ptr & 0x3f == 0);
         crcr.set_value(ptr | 1);
         // crcr.set_pointer(ptr);
         // crcr.set_ring_cycle_state(true);
 
-        let ptr = ER_BUF.x.as_ptr() as u64;
+        let ptr = ER_BUF.lock().x.as_ptr() as u64;
         assert!(ptr & 0x3f == 0);
-        ERSTE_BUF.x[0].addr = ptr;
-        ERSTE_BUF.x[0].size = TRB_BUF_LEN as u16;
+        let mut erste_lock = ERSTE_BUF.lock();
+        erste_lock.x[0].addr = ptr;
+        erste_lock.x[0].size = TRB_BUF_LEN as u16;
 
         let runtime = cap_reg.runtime();
         let interrupt_regs = runtime.interrupt_set();
         interrupt_regs[0].event_ring_segment_table_size.write(1);
         interrupt_regs[0].event_ring_dequeue_pointer.write(ptr);
-        let ptr = ERSTE_BUF.x.as_ptr() as u64;
+        let ptr = erste_lock.x.as_ptr() as u64;
         assert!(ptr & 0x3f == 0);
         interrupt_regs[0].event_ring_segment_table_base_addr.write(ptr);
         interrupt_regs[0].moderation.write(4000);
@@ -943,6 +969,8 @@ impl XhcController {
             capability: cap_reg,
             port_config_phase: [ConfigPhase::NotConnected; 256],
             addressing_port: 0,
+            keyboard_handler,
+            mouse_handler
         }
     }
     pub fn run(&self) {
@@ -952,19 +980,18 @@ impl XhcController {
         while usbsts.hchalted() {}
     }
     pub fn configure_port(&mut self) {
-        unsafe {
-            let max_ports = self.capability.max_ports();
-            for n in 1..=max_ports {
-                let port = self.capability.port_sc(n);
+        let max_ports = self.capability.max_ports();
+        for n in 1..=max_ports {
+            let port = self.capability.port_sc(n);
 
-                if port.is_connected() {
-                    self.reset_port(n);
-                }
+            if port.is_connected() {
+                self.reset_port(n);
             }
         }
     }
+
     // safety: port must be connected
-    pub unsafe fn reset_port(&mut self, port_num: u8) {
+    pub fn reset_port(&mut self, port_num: u8) {
         if self.addressing_port != 0 {
             self.port_config_phase[port_num as usize] = ConfigPhase::WaitingAddressed;
             return;
@@ -987,9 +1014,7 @@ impl XhcController {
         if port.is_enabled() && port.is_port_reset_changed() {
             port.clear_is_port_reset_changed();
             self.port_config_phase[port_num as usize] = ConfigPhase::EnablingSlot;
-            unsafe {
-                CR_BUF.push(TRB::new_enable_slot_trb());
-            }
+            CR_BUF.lock().push(TRB::new_enable_slot_trb());
             self.capability.doorbell()[0].ring(0, 0);
         } else {
             error!("{}, {}", port.is_enabled(), port.is_port_reset_changed());
@@ -997,11 +1022,11 @@ impl XhcController {
         }
     }
 
-    pub unsafe fn address_deivce(&mut self, slot_id: u8, port_num: u8) {
-        let dev = &mut DEVICES_MEM[slot_id as usize];
+    pub fn address_deivce(&mut self, slot_id: u8, port_num: u8) {
+        let dev = &mut DEVICES_MEM[slot_id as usize].lock();
         dev.slot_id = slot_id;
-        dev.doorbell = &mut self.capability.doorbell()[slot_id as usize] as *mut DoorbellRegister;
-        DCBAA.x[slot_id as usize] = &dev.device_ctx as *const DeviceContext as u64;
+        dev.doorbell = &mut self.capability.doorbell()[slot_id as usize] as *mut DoorbellRegister as u64;
+        DCBAA.lock().x[slot_id as usize] = &dev.device_ctx as *const DeviceContext as u64;
         for d in dev.input_ctx.input_control_ctx.data.iter_mut() {
             *d = 0;
         }
@@ -1020,7 +1045,7 @@ impl XhcController {
             }
         };
 
-        let ptr = &mut TR_BUF[slot_id as usize] as *mut MemPoolTrTRB as u64;
+        let ptr = TR_BUF[slot_id as usize][0].lock().x.as_ptr() as *const TRB as u64;
         assert!(ptr & 0x3f == 0);
         dev.input_ctx.ep_ctx[0].data[1] = max_packet << 16 | 4 << 3 | 3 << 1;
         dev.input_ctx.ep_ctx[0].data[2] = (ptr & 0xffffffc0) as u32 | 1;
@@ -1028,17 +1053,13 @@ impl XhcController {
 
         self.port_config_phase[port_num as usize] = ConfigPhase::AddressingDevice;
 
-        CR_BUF.push(TRB::address_device_command_trb(&dev.input_ctx, slot_id));
+        CR_BUF.lock().push(TRB::address_device_command_trb(&dev.input_ctx, slot_id));
         self.capability.doorbell()[0].ring(0, 0);
     }
 
-    pub fn initialize_device(&mut self, slot_id: u8, port_num: u8) {
-        self.port_config_phase[port_num as usize] = ConfigPhase::InitializingDevice;
-        unsafe { DEVICES_MEM[slot_id as usize].start_init() };
-    }
-
     pub fn process_event(&mut self) {
-        if let Some(trb) = unsafe { ER_BUF.next() } {
+        let mut er_lock = ER_BUF.lock();
+        if let Some(trb) = er_lock.next() {
             let v1 = trb.data[0];
             let v2 = trb.data[1];
             let v3 = trb.data[2];
@@ -1052,26 +1073,26 @@ impl XhcController {
                 }
                 casted.on_event(self)
             } else if let Some(casted) = trb.cast::<TransferEventTRB>() {
-                unsafe {casted.on_event(self)}
+                casted.on_event(self)
             } else {
                 error!("{}", make_error!(Code::NotImplemented))
             }
-            unsafe { ER_BUF.clean(self) }
+            er_lock.clean(self);
         }
 
     }
 }
 
 
-pub unsafe fn driver_handle_test(mmio_base: u64, device: &Device) {
-    let mut xhci = XhcController::initialize(mmio_base);
-    xhci.run();
-    xhci.configure_port();
+// pub unsafe fn driver_handle_test(mmio_base: u64, device: &Device) {
+//     let mut xhci = XhcController::initialize(mmio_base);
+//     xhci.run();
+//     xhci.configure_port();
 
-    loop {
-        xhci.process_event();
-        // xhci.capability.doorbell()[1]
-    }
+//     loop {
+//         xhci.process_event();
+//         // xhci.capability.doorbell()[1]
+//     }
 
 
     // initialized
@@ -1096,7 +1117,7 @@ pub unsafe fn driver_handle_test(mmio_base: u64, device: &Device) {
     //         }
     //     }
     // }
-}
+// }
 
 // unsafe fn configure_msi(device: &Device, msg_addr: u32, msg_data: u32, num_vector_exponent: u32) {
 //     let mut msi_cap_addr = 0u8;
