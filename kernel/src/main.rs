@@ -18,13 +18,15 @@ mod interrupt;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicPtr, Ordering};
+use heapless::mpmc::Q32;
+
 use crate::graphics::*;
 use crate::console::*;
 use crate::logger::*;
 
 
 #[panic_handler]
-extern "C" fn panic(info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
     println!("{}", info);
     loop {
         unsafe {
@@ -33,7 +35,11 @@ extern "C" fn panic(info: &PanicInfo) -> ! {
     }
 }
 
-static XHCI_PTR: AtomicPtr<usb::XhcController> = AtomicPtr::new(0 as *mut usb::XhcController);
+enum Message {
+    InterruptXHCI,
+}
+
+static MAIN_Q: Q32<Message> = Q32::new();
 
 fn keyboard_handler(modifire: u8, pressing: [u8; 6]) {
 
@@ -44,8 +50,9 @@ fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
 }
 
 extern "x86-interrupt" fn int_handler_xhci(frame: interrupt::InterruptFrame) {
-    let xhc = unsafe { &mut *XHCI_PTR.load(Ordering::Relaxed) };
-    while xhc.process_event() {}
+    // let xhc = unsafe { &mut *XHCI_PTR.load(Ordering::Relaxed) };
+    // while xhc.process_event() {}
+    MAIN_Q.enqueue(Message::InterruptXHCI).ok();
     interrupt::notify_end_of_interrupt();
 }
 
@@ -131,12 +138,26 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
     let mut xhc = unsafe {
         usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse_handler)
     };
-    XHCI_PTR.store(&mut xhc, Ordering::Relaxed);
     xhc.run();
     xhc.configure_port();
 
-    unsafe {
-        asm!("sti")
+    loop {
+        unsafe { asm!("cli") };
+        if let Some(msg) = MAIN_Q.dequeue() {
+            unsafe { asm!("sti") }
+            match msg {
+                Message::InterruptXHCI => {
+                    while xhc.process_event() {}
+                }
+            }
+        } else {
+            unsafe {
+                asm!(
+                    "sti",
+                    "hlt"
+                )
+            }
+        }
     }
 
 
