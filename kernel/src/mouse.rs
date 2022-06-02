@@ -58,12 +58,22 @@ impl MouseCursor {
     }
     pub fn move_relative(&mut self, diff_x: i8, diff_y: i8) {
         let mut writer = PixelWriter::get().unwrap().lock();
-        let x = ((self.pos_x as isize) + (diff_x as isize)) as usize;
-        let y = ((self.pos_y as isize) + (diff_y as isize)) as usize;
+        let mut x = (self.pos_x as isize) + (diff_x as isize);
+        let mut y = (self.pos_y as isize) + (diff_y as isize);
+        if x < 0 {
+            x = 0;
+        } else if x >= writer.horizontal_resolution() as isize {
+            x = writer.horizontal_resolution() as isize - 1;
+        }
+        if y < 0 {
+            y = 0;
+        } else if y >= writer.vertical_resolution() as isize {
+            y = writer.vertical_resolution() as isize - 1;
+        }
         self.erase_mouse_cursor(&mut writer, self.pos_x, self.pos_y);
-        self.draw_mouse_cursor(&mut writer, x, y);
-        self.pos_x = x;
-        self.pos_y = y;
+        self.draw_mouse_cursor(&mut writer, x as usize, y as usize);
+        self.pos_x = x as usize;
+        self.pos_y = y as usize;
     }
 }
 

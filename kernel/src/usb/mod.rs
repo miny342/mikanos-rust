@@ -1,4 +1,5 @@
 use core::intrinsics::transmute;
+use core::mem::MaybeUninit;
 use core::ptr::{slice_from_raw_parts_mut, write_volatile};
 use core::slice::from_raw_parts_mut;
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -1057,7 +1058,7 @@ impl XhcController {
         self.capability.doorbell()[0].ring(0, 0);
     }
 
-    pub fn process_event(&mut self) {
+    pub fn process_event(&mut self) -> bool {
         let mut er_lock = ER_BUF.lock();
         if let Some(trb) = er_lock.next() {
             let v1 = trb.data[0];
@@ -1078,8 +1079,9 @@ impl XhcController {
                 error!("{}", make_error!(Code::NotImplemented))
             }
             er_lock.clean(self);
+            return true
         }
-
+        false
     }
 }
 

@@ -24,7 +24,7 @@ pub fn set_log_level(level: LogLevel) {
 macro_rules! log {
     ($c:expr, $($arg:tt)*) => {
         if $c.to_num() <= $crate::logger::LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed) {
-            println!($($arg)*)
+            $crate::println!($($arg)*)
         }
     };
 }

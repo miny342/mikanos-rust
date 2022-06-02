@@ -2,6 +2,7 @@
 #![no_main]
 
 #![feature(abi_efiapi)]
+#![feature(abi_x86_interrupt)]
 
 mod graphics;
 mod font;
@@ -12,17 +13,18 @@ mod error;
 mod logger;
 mod usb;
 mod mouse;
+mod interrupt;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
-
+use core::sync::atomic::{AtomicPtr, Ordering};
 use crate::graphics::*;
 use crate::console::*;
 use crate::logger::*;
 
 
 #[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
+extern "C" fn panic(info: &PanicInfo) -> ! {
     println!("{}", info);
     loop {
         unsafe {
@@ -31,12 +33,20 @@ fn panic(info: &PanicInfo) -> ! {
     }
 }
 
+static XHCI_PTR: AtomicPtr<usb::XhcController> = AtomicPtr::new(0 as *mut usb::XhcController);
+
 fn keyboard_handler(modifire: u8, pressing: [u8; 6]) {
 
 }
 
 fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
     mouse::CURSOR.lock().move_relative(move_x, move_y)
+}
+
+extern "x86-interrupt" fn int_handler_xhci(frame: interrupt::InterruptFrame) {
+    let xhc = unsafe { &mut *XHCI_PTR.load(Ordering::Relaxed) };
+    while xhc.process_event() {}
+    interrupt::notify_end_of_interrupt();
 }
 
 #[no_mangle]
@@ -104,6 +114,15 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
 
     info!("xHC has been found: {}.{}.{}", xhc_dev.bus, xhc_dev.device, xhc_dev.func);
 
+    let cs = interrupt::get_cs();
+    interrupt::set_idt_entry(interrupt::InterruptVector::XHCI as usize, interrupt::InterruptDescriptorAttr::new(interrupt::DescriptorType::InterruptGate, 0, true, 0), int_handler_xhci as *const fn() as u64, cs);
+    interrupt::load_idt();
+
+    unsafe {
+        let bsp_local_apic_id = (*(0xfee00020 as *const u32) >> 24) as u8;
+        pci::configure_msi_fixed_destination(xhc_dev, bsp_local_apic_id, pci::MSITriggerMode::Level, pci::MSIDeliveryMode::Fixed, interrupt::InterruptVector::XHCI as u8, 0);
+    }
+
     let xhc_bar = unsafe {pci::read_bar(xhc_dev, 0)}.unwrap();
     debug!("read bar: Success");
     let xhc_mmio_base = xhc_bar & !0xf;
@@ -112,11 +131,12 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
     let mut xhc = unsafe {
         usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse_handler)
     };
+    XHCI_PTR.store(&mut xhc, Ordering::Relaxed);
     xhc.run();
     xhc.configure_port();
 
-    loop {
-        xhc.process_event();
+    unsafe {
+        asm!("sti")
     }
 
 
