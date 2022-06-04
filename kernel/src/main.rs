@@ -27,6 +27,17 @@ use crate::logger::*;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    unsafe {
+        asm!("cli");
+        match PixelWriter::get() {
+            Ok(s) => s.force_unlock(),
+            Err(_) => {}
+        };
+        match Console::get() {
+            Ok(s) => s.force_unlock(),
+            Err(_) => {}
+        };
+    }
     println!("{}", info);
     loop {
         unsafe {
