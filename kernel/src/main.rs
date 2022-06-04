@@ -18,7 +18,10 @@ mod interrupt;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicPtr, Ordering};
+use common::memory_map::MemoryMap;
 use heapless::mpmc::Q32;
+
+use common::writer_config::FrameBufferConfig;
 
 use crate::graphics::*;
 use crate::console::*;
@@ -68,7 +71,7 @@ extern "x86-interrupt" fn int_handler_xhci(frame: interrupt::InterruptFrame) {
 }
 
 #[no_mangle]
-extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
+extern "efiapi" fn kernel_main(config: *const FrameBufferConfig, memmap_ptr: *const MemoryMap) -> ! {
     unsafe {
         PixelWriter::init(*config);
         Console::init(PixelColor { r: 255, g: 255, b: 255}, PixelColor { r: 0, g: 0, b: 0 })
@@ -82,13 +85,24 @@ extern "efiapi" fn kernel_main(config: *const FrameBufferConfig) -> ! {
                 writer.write(x, y, &PixelColor { r: 0, g: 0, b: 0 });
             }
         }
-        for x in 0..200 {
-            for y in 0..100 {
-                writer.write(100 + x, 100 + y, &PixelColor { r: 255, g: 0, b: 255 });
-            }
-        }
     }
 
+    let memmap = unsafe { &*core::ptr::slice_from_raw_parts((*memmap_ptr).ptr, (*memmap_ptr).size) };
+    for i in memmap.iter() {
+        println!("type = {}, phys = {:x} - {:x}, pages = {:x}, attr = {:x}",
+            i.ty,
+            i.phys_start,
+            i.phys_start + i.page_count * 4096 - 1,
+            i.page_count,
+            i.attr,
+        )
+    }
+
+    loop {
+        unsafe {
+            asm!("hlt")
+        }
+    }
 
     println!("hello");
     set_log_level(LogLevel::Debug);

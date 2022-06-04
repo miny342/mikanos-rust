@@ -2,25 +2,30 @@ use core::{mem::MaybeUninit, ptr::slice_from_raw_parts_mut};
 use spin::Mutex;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-#[repr(C)]
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
-pub enum PixelFormat {
-    Rgb,
-    Bgr,
-    Bitmask,
-    BltOnly,
-}
+use common::writer_config::{
+    PixelFormat,
+    FrameBufferConfig,
+};
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct FrameBufferConfig {
-    pub frame_buffer: *mut u8,
-    pub pixels_per_scan_line: usize,
-    pub horizontal_resolution: usize,
-    pub vertical_resolution: usize,
-    pub pixel_format: PixelFormat,
-}
+// #[repr(C)]
+// #[allow(dead_code)]
+// #[derive(Debug, Clone, Copy)]
+// pub enum PixelFormat {
+//     Rgb,
+//     Bgr,
+//     Bitmask,
+//     BltOnly,
+// }
+
+// #[repr(C)]
+// #[derive(Debug, Clone, Copy)]
+// pub struct FrameBufferConfig {
+//     pub frame_buffer: *mut u8,
+//     pub pixels_per_scan_line: usize,
+//     pub horizontal_resolution: usize,
+//     pub vertical_resolution: usize,
+//     pub pixel_format: PixelFormat,
+// }
 
 #[derive(Debug, Clone, Copy)]
 pub struct PixelColor {
@@ -111,6 +116,6 @@ impl PixelWriter {
         unsafe {
             (self.write_)(self.frame_buffer.add(4* (self.pixels_per_scan_line * y + x)), c);
         }
-        
+
     }
 }

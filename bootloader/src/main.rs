@@ -25,7 +25,8 @@ use core::arch::asm;
 use core::fmt::Write;
 use core::ops::Deref;
 
-pub mod writer_config;
+use common::writer_config;
+use common::memory_map::{MemoryMap, MemoryDescriptor};
 
 use writer_config::*;
 
@@ -38,8 +39,8 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
 
     writeln!(st.stdout(), "Hello, World!").unwrap();
 
-    let mem_desc_buffer: &mut [u8] = &mut [0; 4 * 4096];
-    let (_memory_map_key, descriptor_iter) = st.boot_services().memory_map(mem_desc_buffer).unwrap();
+    // let mem_desc_buffer: &mut [u8] = &mut [0; 4 * 4096];
+    // let (_memory_map_key, descriptor_iter) = st.boot_services().memory_map(mem_desc_buffer).unwrap();
 
     let fs = st.boot_services().get_image_file_system(handle).unwrap().interface.get();
     let mut root_dir: Directory;
@@ -48,20 +49,20 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
     }
 
     let mut str_buf = [0; 100];
-    let name = CStr16::from_str_with_buf("\\memmap", &mut str_buf).unwrap();
-    let memmap_file_type = root_dir.open(name, FileMode::CreateReadWrite, FileAttribute::empty()).unwrap().into_type().unwrap();
-    if let Regular(mut memmap_file) = memmap_file_type {
-        let header = "Index, Type, Type(name), PhysicalStart, NumberOfPages, Attribute\n".as_bytes();
-        memmap_file.write(header).unwrap();
+    // let name = CStr16::from_str_with_buf("\\memmap", &mut str_buf).unwrap();
+    // let memmap_file_type = root_dir.open(name, FileMode::CreateReadWrite, FileAttribute::empty()).unwrap().into_type().unwrap();
+    // if let Regular(mut memmap_file) = memmap_file_type {
+    //     let header = "Index, Type, Type(name), PhysicalStart, NumberOfPages, Attribute\n".as_bytes();
+    //     memmap_file.write(header).unwrap();
 
-        for (i, d) in descriptor_iter.enumerate() {
-            let tmp = format!("{}, {:x}, {:?}, {:>08x}, {:x}, {:x}\n", i, d.ty.0, d.ty, d.phys_start, d.page_count, d.att.bits());
-            let buf = tmp.as_bytes();
-            memmap_file.write(buf).unwrap();
-        }
+    //     for (i, d) in descriptor_iter.enumerate() {
+    //         let tmp = format!("{}, {:x}, {:?}, {:>08x}, {:x}, {:x}\n", i, d.ty.0, d.ty, d.phys_start, d.page_count, d.att.bits());
+    //         let buf = tmp.as_bytes();
+    //         memmap_file.write(buf).unwrap();
+    //     }
 
-        memmap_file.close();
-    }
+    //     memmap_file.close();
+    // }
 
     // https://stackoverflow.com/questions/57487924/what-is-the-correct-way-to-load-a-uefi-protocol
 
@@ -158,14 +159,31 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
         writeln!(st.stdout(), "entry point: {:x}", entry_point).unwrap();
 
         let kernel_entry = unsafe {
-            let f: extern "efiapi" fn(*const FrameBufferConfig) -> ! = core::mem::transmute(entry_point);
+            let f: extern "efiapi" fn(*const FrameBufferConfig, *const MemoryMap) -> ! = core::mem::transmute(entry_point);
             f
         };
 
-        let mut b = vec![0u8; st.boot_services().memory_map_size().map_size + 2048].into_boxed_slice();
-        st.exit_boot_services(handle, &mut b[..]).unwrap();
+        let memmap_size = st.boot_services().memory_map_size().map_size + 2048;
+        let b = vec![0u8; memmap_size].leak();
+        let mut descriptors = alloc::vec::Vec::with_capacity(memmap_size);
+        let (_st, iter) = st.exit_boot_services(handle, b).unwrap();
 
-        kernel_entry(&config);
+        for d in iter {
+            descriptors.push(MemoryDescriptor {
+                ty: d.ty.0,
+                phys_start: d.phys_start,
+                virt_start: d.virt_start,
+                page_count: d.page_count,
+                attr: d.att.bits(),
+            });
+        }
+
+        let memmap = MemoryMap {
+            ptr: descriptors.as_ptr(),
+            size: descriptors.len(),
+        };
+
+        kernel_entry(&config, &memmap);
     }
     writeln!(st.stdout(), "kernel load error").unwrap();
     loop {
