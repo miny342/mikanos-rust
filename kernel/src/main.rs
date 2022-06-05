@@ -14,6 +14,7 @@ mod logger;
 mod usb;
 mod mouse;
 mod interrupt;
+mod segment;
 
 use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
@@ -73,6 +74,13 @@ extern "x86-interrupt" fn int_handler_xhci(frame: interrupt::InterruptFrame) {
 
 #[no_mangle]
 extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const MemoryMap) -> ! {
+    segment::setup_segments();
+    segment::set_ds_all(0);
+    unsafe {
+        segment::set_csss(1 << 3, 2 << 3);
+    }
+
+
     unsafe {
         PixelWriter::init(*config);
         Console::init(PixelColor { r: 255, g: 255, b: 255}, PixelColor { r: 0, g: 0, b: 0 })

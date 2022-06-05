@@ -10,3 +10,14 @@ kernel_main:
 .fin:
     hlt
     jmp .fin
+
+.global set_csss
+set_csss:
+    mov ss, si
+    mov rax, OFFSET .next
+    push rdi
+    push rax
+    retfq
+.next:
+    ret
+
