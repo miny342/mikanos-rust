@@ -42,7 +42,7 @@ unsafe fn set_data_segment(idx: usize, ty: DescriptorType, descriptor_privilege_
 }
 
 unsafe fn load_gdt() {
-    const LIMIT: u16 = core::mem::size_of::<[SegmentDescriptor; 3]>() as u16;
+    const LIMIT: u16 = core::mem::size_of::<[SegmentDescriptor; 3]>() as u16 - 1;
     let offset = &GDT[0] as *const _ as u64;
     asm!(
         "sub rsp, 10",

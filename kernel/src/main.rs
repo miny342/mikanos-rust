@@ -15,6 +15,7 @@ mod usb;
 mod mouse;
 mod interrupt;
 mod segment;
+mod paging;
 
 use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
@@ -78,6 +79,9 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     segment::set_ds_all(0);
     unsafe {
         segment::set_csss(1 << 3, 2 << 3);
+    }
+    unsafe{
+        paging::setup_identity_page_table();
     }
 
 
