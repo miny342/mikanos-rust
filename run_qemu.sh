@@ -1,8 +1,8 @@
 #!/bin/sh
 $HOME/qemu-6.2.0/build/qemu-system-x86_64 \
     -m 1G \
-    -drive if=pflash,file=./lib/OVMF_CODE.fd \
-    -drive if=pflash,file=./lib/OVMF_VARS.fd \
+    -drive if=pflash,readonly=on,file=./lib/OVMF_CODE.fd \
+    -drive if=pflash,readonly=on,file=./lib/OVMF_VARS.fd \
     -hda disk.img \
     -monitor stdio \
     -device nec-usb-xhci,id=xhci \

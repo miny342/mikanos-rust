@@ -1,3 +1,9 @@
 #!/bin/sh
 cd $HOME/mikanos-rust/bootloader
-cargo build --release
+
+if [ "$#" -gt 0 ]
+then
+    cargo build --release
+else
+    cargo build --profile=release-with-debug
+fi

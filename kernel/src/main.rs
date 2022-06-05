@@ -15,7 +15,7 @@ mod usb;
 mod mouse;
 mod interrupt;
 
-use core::arch::asm;
+use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicPtr, Ordering};
 use common::memory_map::MemoryMap;
@@ -27,6 +27,7 @@ use crate::graphics::*;
 use crate::console::*;
 use crate::logger::*;
 
+global_asm!(include_str!("asm.s"));
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -71,7 +72,7 @@ extern "x86-interrupt" fn int_handler_xhci(frame: interrupt::InterruptFrame) {
 }
 
 #[no_mangle]
-extern "efiapi" fn kernel_main(config: *const FrameBufferConfig, memmap_ptr: *const MemoryMap) -> ! {
+extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const MemoryMap) -> ! {
     unsafe {
         PixelWriter::init(*config);
         Console::init(PixelColor { r: 255, g: 255, b: 255}, PixelColor { r: 0, g: 0, b: 0 })
