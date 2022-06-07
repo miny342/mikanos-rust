@@ -5,10 +5,19 @@ pub struct MemoryMap {
 }
 
 pub struct MemoryDescriptor {
-    pub ty: u32,
-    pub phys_start: u64,
-    pub virt_start: u64,
-    pub page_count: u64,
-    pub attr: u64,
+    pub ty: usize,
+    pub phys_start: usize,
+    pub virt_start: usize,
+    pub page_count: usize,
+    pub attr: usize,
 }
+
+impl MemoryDescriptor {
+    pub fn is_available(&self) -> bool {
+        self.ty == 3 || self.ty == 4 || self.ty == 7
+    }
+}
+
+pub const UEFI_PAGE_SIZE: usize = 4096;
+
 

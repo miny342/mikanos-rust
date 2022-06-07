@@ -16,11 +16,12 @@ mod mouse;
 mod interrupt;
 mod segment;
 mod paging;
+mod memory_manager;
 
 use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicPtr, Ordering};
-use common::memory_map::MemoryMap;
+use common::memory_map::{MemoryMap, UEFI_PAGE_SIZE};
 use heapless::mpmc::Q32;
 
 use common::writer_config::FrameBufferConfig;
@@ -28,6 +29,11 @@ use common::writer_config::FrameBufferConfig;
 use crate::graphics::*;
 use crate::console::*;
 use crate::logger::*;
+use crate::memory_manager::{
+    BitmapMemoryManager,
+    FrameID,
+    BYTES_PER_FRAME, MANAGER
+};
 
 global_asm!(include_str!("asm.s"));
 
@@ -84,6 +90,27 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
         paging::setup_identity_page_table();
     }
 
+    let memmap = unsafe { &*core::ptr::slice_from_raw_parts((*memmap_ptr).ptr, (*memmap_ptr).size) };
+    let memory_manager = unsafe { &mut MANAGER };
+    let mut available_end: usize = 0;
+    for desc in memmap.iter() {
+        if available_end < desc.phys_start {
+            memory_manager.mark_allocated(
+                &FrameID(available_end / BYTES_PER_FRAME),
+                (desc.phys_start - available_end) / BYTES_PER_FRAME,
+            )
+        }
+        let physical_end = desc.phys_start + desc.page_count * UEFI_PAGE_SIZE;
+        if desc.is_available() {
+            available_end = physical_end;
+        } else {
+            memory_manager.mark_allocated(
+                &FrameID(desc.phys_start / BYTES_PER_FRAME),
+                desc.page_count * UEFI_PAGE_SIZE / BYTES_PER_FRAME
+            )
+        }
+    }
+    memory_manager.set_memory_range(&FrameID(1), &FrameID(available_end / BYTES_PER_FRAME));
 
     unsafe {
         PixelWriter::init(*config);
@@ -100,7 +127,7 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
         }
     }
 
-    let memmap = unsafe { &*core::ptr::slice_from_raw_parts((*memmap_ptr).ptr, (*memmap_ptr).size) };
+
     for i in memmap.iter() {
         println!("type = {}, phys = {:x} - {:x}, pages = {:x}, attr = {:x}",
             i.ty,

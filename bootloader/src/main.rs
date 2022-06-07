@@ -170,11 +170,11 @@ fn efi_main(handle: Handle, mut st: SystemTable<Boot>) -> Status {
 
         for d in iter {
             descriptors.push(MemoryDescriptor {
-                ty: d.ty.0,
-                phys_start: d.phys_start,
-                virt_start: d.virt_start,
-                page_count: d.page_count,
-                attr: d.att.bits(),
+                ty: d.ty.0 as usize,
+                phys_start: d.phys_start as usize,
+                virt_start: d.virt_start as usize,
+                page_count: d.page_count as usize,
+                attr: d.att.bits() as usize,
             });
         }
 
