@@ -3,6 +3,7 @@
 
 #![feature(abi_efiapi)]
 #![feature(abi_x86_interrupt)]
+#![feature(alloc_error_handler)]
 
 mod graphics;
 mod font;
@@ -17,10 +18,11 @@ mod interrupt;
 mod segment;
 mod paging;
 mod memory_manager;
+mod allocator;
 
+use core::alloc::Layout;
 use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
-use core::sync::atomic::{AtomicPtr, Ordering};
 use common::memory_map::{MemoryMap, UEFI_PAGE_SIZE};
 use heapless::mpmc::Q32;
 
@@ -30,12 +32,22 @@ use crate::graphics::*;
 use crate::console::*;
 use crate::logger::*;
 use crate::memory_manager::{
-    BitmapMemoryManager,
     FrameID,
     BYTES_PER_FRAME, MANAGER
 };
 
+extern crate alloc;
+
 global_asm!(include_str!("asm.s"));
+
+#[global_allocator]
+static ALLOCATOR: allocator::LinkedListAllocator = allocator::LinkedListAllocator::empty();
+
+#[alloc_error_handler]
+fn on_oom(_layout: Layout) -> ! {
+    panic!("oom");
+}
+
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -112,6 +124,14 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     }
     memory_manager.set_memory_range(&FrameID(1), &FrameID(available_end / BYTES_PER_FRAME));
 
+    let heap_frame = 64 * 512;
+    let heap_start = memory_manager.allocate(heap_frame).expect("cannot initialize heap allocate");
+    let start = heap_start.0 * BYTES_PER_FRAME;
+    let end = start + heap_frame * BYTES_PER_FRAME;
+    unsafe {
+        ALLOCATOR.init(start, end);
+    }
+
     unsafe {
         PixelWriter::init(*config);
         Console::init(PixelColor { r: 255, g: 255, b: 255}, PixelColor { r: 0, g: 0, b: 0 })
@@ -124,23 +144,6 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
             for y in 0..writer.vertical_resolution() {
                 writer.write(x, y, &PixelColor { r: 0, g: 0, b: 0 });
             }
-        }
-    }
-
-
-    for i in memmap.iter() {
-        println!("type = {}, phys = {:x} - {:x}, pages = {:x}, attr = {:x}",
-            i.ty,
-            i.phys_start,
-            i.phys_start + i.page_count * 4096 - 1,
-            i.page_count,
-            i.attr,
-        )
-    }
-
-    loop {
-        unsafe {
-            asm!("hlt")
         }
     }
 
