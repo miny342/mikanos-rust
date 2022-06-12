@@ -3,7 +3,11 @@ use core::mem::MaybeUninit;
 use core::ptr::{slice_from_raw_parts_mut, write_volatile};
 use core::slice::from_raw_parts_mut;
 use core::sync::atomic::{AtomicU8, Ordering};
+use core::task::Poll;
 
+use conquer_once::spin::OnceCell;
+use futures_util::{Stream, StreamExt};
+use futures_util::task::AtomicWaker;
 use spin::Mutex;
 use volatile_register::{RW, RO, WO};
 use heapless::FnvIndexMap;
@@ -773,8 +777,8 @@ struct MemPoolErTRB {
 }
 
 impl MemPoolErTRB {
-    pub fn next(&mut self) -> Option<&TRB> {
-        let v = &self.x[self.index];
+    fn next_(&mut self) -> Option<TRB> {
+        let v = self.x[self.index];
         if v.cycle() == self.cycle {
             if self.index == TRB_BUF_LEN - 1 {
                 self.index = 0;
@@ -787,7 +791,7 @@ impl MemPoolErTRB {
             None
         }
     }
-    pub fn clean(&self, xhc: &XhcController) {
+    fn clean(&self, xhc: &XhcController) {
         unsafe {
             let interrupt_reg = xhc.capability.runtime().interrupt_set();
             let p = interrupt_reg[0].event_ring_dequeue_pointer.read() & 0xf;
@@ -796,7 +800,33 @@ impl MemPoolErTRB {
     }
 }
 
+impl Stream for MemPoolErTRB {
+    type Item = TRB;
+
+    fn poll_next(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Option<Self::Item>> {
+        let v = self.get_mut();
+        if let Some(trb) = v.next_() {
+            return Poll::Ready(Some(trb))
+        }
+
+        ER_WAKER.register(&cx.waker());
+        match v.next_() {
+            Some(trb) => {
+                ER_WAKER.take();
+                Poll::Ready(Some(trb))
+            }
+            None => Poll::Pending
+        }
+    }
+}
+
+pub extern "x86-interrupt" fn int_handler_xhci(frame: crate::interrupt::InterruptFrame) {
+    ER_WAKER.wake();
+    crate::interrupt::notify_end_of_interrupt();
+}
+
 static ER_BUF: Mutex<MemPoolErTRB> = Mutex::new(MemPoolErTRB { x: [TRB { data: [0; 4] }; TRB_BUF_LEN], index: 0, cycle: true });
+static ER_WAKER: AtomicWaker = AtomicWaker::new();
 
 #[derive(Clone, Copy)]
 #[repr(C, align(64))]
@@ -1058,9 +1088,9 @@ impl XhcController {
         self.capability.doorbell()[0].ring(0, 0);
     }
 
-    pub fn process_event(&mut self) -> bool {
+    pub async fn process_event(&mut self) {
         let mut er_lock = ER_BUF.lock();
-        if let Some(trb) = er_lock.next() {
+        while let Some(trb) = er_lock.next().await {
             let v1 = trb.data[0];
             let v2 = trb.data[1];
             let v3 = trb.data[2];
@@ -1079,9 +1109,7 @@ impl XhcController {
                 error!("{}", make_error!(Code::NotImplemented))
             }
             er_lock.clean(self);
-            return true
         }
-        false
     }
 }
 

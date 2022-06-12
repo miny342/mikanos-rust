@@ -19,10 +19,12 @@ mod segment;
 mod paging;
 mod memory_manager;
 mod allocator;
+mod task;
 
 use core::alloc::Layout;
 use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
+use alloc::boxed::Box;
 use common::memory_map::{MemoryMap, UEFI_PAGE_SIZE};
 use heapless::mpmc::Q32;
 
@@ -84,13 +86,6 @@ fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
     mouse::CURSOR.lock().move_relative(move_x, move_y)
 }
 
-extern "x86-interrupt" fn int_handler_xhci(frame: interrupt::InterruptFrame) {
-    // let xhc = unsafe { &mut *XHCI_PTR.load(Ordering::Relaxed) };
-    // while xhc.process_event() {}
-    MAIN_Q.enqueue(Message::InterruptXHCI).ok();
-    interrupt::notify_end_of_interrupt();
-}
-
 #[no_mangle]
 extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const MemoryMap) -> ! {
     segment::setup_segments();
@@ -131,6 +126,7 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     unsafe {
         ALLOCATOR.init(start, end);
     }
+    // initialized memory allocator
 
     unsafe {
         PixelWriter::init(*config);
@@ -190,7 +186,7 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     info!("xHC has been found: {}.{}.{}", xhc_dev.bus, xhc_dev.device, xhc_dev.func);
 
     let cs = interrupt::get_cs();
-    interrupt::set_idt_entry(interrupt::InterruptVector::XHCI as usize, interrupt::InterruptDescriptorAttr::new(interrupt::DescriptorType::InterruptGate, 0, true, 0), int_handler_xhci as *const fn() as u64, cs);
+    interrupt::set_idt_entry(interrupt::InterruptVector::XHCI as usize, interrupt::InterruptDescriptorAttr::new(interrupt::DescriptorType::InterruptGate, 0, true, 0), usb::int_handler_xhci as *const fn() as u64, cs);
     interrupt::load_idt();
 
     unsafe {
@@ -203,30 +199,37 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     let xhc_mmio_base = xhc_bar & !0xf;
     debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
 
-    let mut xhc = unsafe {
-        usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse_handler)
+    let xhc = unsafe {
+        Box::new(usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse_handler))
     };
+    let xhc = Box::leak(xhc);
     xhc.run();
     xhc.configure_port();
 
-    loop {
-        unsafe { asm!("cli") };
-        if let Some(msg) = MAIN_Q.dequeue() {
-            unsafe { asm!("sti") }
-            match msg {
-                Message::InterruptXHCI => {
-                    while xhc.process_event() {}
-                }
-            }
-        } else {
-            unsafe {
-                asm!(
-                    "sti",
-                    "hlt"
-                )
-            }
-        }
-    }
+    unsafe { asm!("sti") }
+
+    let mut executor = task::executor::Executor::new();
+    executor.spawn(task::Task::new(xhc.process_event()));
+    executor.run();
+
+    // loop {
+    //     unsafe { asm!("cli") };
+    //     if let Some(msg) = MAIN_Q.dequeue() {
+    //         unsafe { asm!("sti") }
+    //         match msg {
+    //             Message::InterruptXHCI => {
+    //                 while xhc.process_event_() {}
+    //             }
+    //         }
+    //     } else {
+    //         unsafe {
+    //             asm!(
+    //                 "sti",
+    //                 "hlt"
+    //             )
+    //         }
+    //     }
+    // }
 
 
     loop {

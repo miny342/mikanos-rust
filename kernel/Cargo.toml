@@ -10,3 +10,6 @@ heapless = "0.7.13"
 volatile-register = "0.2.1"
 spin = "0.9.3"
 common = {path = "../common"}
+crossbeam = {version = "0.8.1", default-features = false, features = ["alloc"]}
+conquer-once = {version = "0.3.2", default-features = false}
+futures-util = {version = "0.3.21", default-features = false, features = ["alloc"]}
