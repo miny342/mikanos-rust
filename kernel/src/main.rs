@@ -21,6 +21,7 @@ mod memory_manager;
 mod allocator;
 mod task;
 mod window;
+mod timer;
 
 use core::alloc::Layout;
 use core::arch::{asm, global_asm};
@@ -38,6 +39,7 @@ use crate::memory_manager::{
     FrameID,
     BYTES_PER_FRAME, MANAGER
 };
+use crate::timer::initialize_apic_timer;
 use crate::window::WindowManager;
 
 extern crate alloc;
@@ -148,8 +150,10 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     WindowManager::up_down(mouse_id, 1);
     WindowManager::draw();
 
+    initialize_apic_timer();
+
     println!("hello");
-    set_log_level(LogLevel::Debug);
+    set_log_level(LogLevel::Error);
 
     let res = pci::scan_all_bus();
     match res {

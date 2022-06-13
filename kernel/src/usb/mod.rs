@@ -503,7 +503,7 @@ impl CommandCompletionEventTRB {
     }
     pub fn on_event(&self, xhc: &mut XhcController) {
         let ty = self.ptr().ty();
-        println!("cce-ty:{}", ty);
+        debug!("cce-ty:{}", ty);
         if ty == 9 { // enable slot command
             if xhc.port_config_phase[xhc.addressing_port as usize] != ConfigPhase::EnablingSlot {
                 panic!()
