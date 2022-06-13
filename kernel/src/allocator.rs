@@ -3,7 +3,7 @@ use core::alloc::{GlobalAlloc, Layout};
 
 use spin::Mutex;
 
-use crate::println;
+use crate::{println, debug};
 
 #[derive(Debug)]
 struct List {
@@ -36,7 +36,7 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
         let mut lock = self.center.lock();
         let align = layout.align();
         let size = if layout.size() < LIST_SIZE { LIST_SIZE } else { layout.size() };
-        // println!("allocate {}, {}", align, size);
+        debug!("allocate {}, {}", align, size);
 
         let mut list = lock.clone();
         let mut prev = null_mut::<List>();
@@ -46,7 +46,7 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
         }
 
         loop {
-            // println!("list: {:p}, {:?}", list, *list);
+            debug!("list: {:p}, {:?}", list, *list);
             let head = list as usize;
             let end = (*list).size + head;
 

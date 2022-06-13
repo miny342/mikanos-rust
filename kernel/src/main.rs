@@ -22,6 +22,7 @@ mod allocator;
 mod task;
 mod window;
 mod timer;
+mod serial;
 
 use core::alloc::Layout;
 use core::arch::{asm, global_asm};
@@ -39,6 +40,7 @@ use crate::memory_manager::{
     FrameID,
     BYTES_PER_FRAME, MANAGER
 };
+use crate::serial::init_serial;
 use crate::timer::initialize_apic_timer;
 use crate::window::WindowManager;
 
@@ -59,16 +61,8 @@ fn on_oom(_layout: Layout) -> ! {
 fn panic(info: &PanicInfo) -> ! {
     unsafe {
         asm!("cli");
-        match PixelWriter::get() {
-            Ok(s) => s.force_unlock(),
-            Err(_) => {}
-        };
-        match Console::get() {
-            Ok(s) => s.force_unlock(),
-            Err(_) => {}
-        };
     }
-    println!("{}", info);
+    serial_println!("{}", info);
     loop {
         unsafe {
             asm!("hlt");
@@ -88,6 +82,8 @@ fn keyboard_handler(modifire: u8, pressing: [u8; 6]) {
 
 #[no_mangle]
 extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const MemoryMap) -> ! {
+    unsafe { init_serial() }
+    set_log_level(LogLevel::Debug);
     segment::setup_segments();
     segment::set_ds_all(0);
     unsafe {
@@ -128,23 +124,28 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     }
     // initialized memory allocator
 
-    unsafe {
-        PixelWriter::init(*config);
-        // Console::init(PixelColor { r: 255, g: 255, b: 255, a: 255}, PixelColor { r: 0, g: 0, b: 0, a: 255 })
-    };
-    let writer = PixelWriter::get().unwrap();
+    // unsafe {
+    //     PixelWriter::init(*config);
+    //     // Console::init(PixelColor { r: 255, g: 255, b: 255, a: 255}, PixelColor { r: 0, g: 0, b: 0, a: 255 })
+    // };
+    // let writer = PixelWriter::get().unwrap();
 
-    {
-        let mut writer = writer.lock();
-        for x in 0..writer.horizontal_resolution() {
-            for y in 0..writer.vertical_resolution() {
-                writer.write(x, y, &PixelColor { r: 0, g: 0, b: 0, a: 255 });
-            }
-        }
-    }
+    // {
+    //     let mut writer = writer.lock();
+    //     for x in 0..writer.horizontal_resolution() {
+    //         for y in 0..writer.vertical_resolution() {
+    //             writer.write(x, y, &PixelColor { r: 0, g: 0, b: 0, a: 255 });
+    //         }
+    //     }
+    // }
+    let (width, height) = unsafe {
+        ((*config).horizontal_resolution, (*config).vertical_resolution)
+    };
+    let screen = unsafe { FrameBuffer::new(*config) };
+    WindowManager::new(screen);
 
     let mouse_id = mouse::MouseCursor::new();
-    let console_id = Console::new(PixelColor { r: 255, g: 255, b: 255, a: 255}, PixelColor { r: 0, g: 0, b: 0, a: 255 });
+    let console_id = Console::new(PixelColor { r: 255, g: 255, b: 255, a: 255}, PixelColor { r: 0, g: 0, b: 0, a: 255 }, width, height);
 
     WindowManager::up_down(console_id, 0);
     WindowManager::up_down(mouse_id, 1);

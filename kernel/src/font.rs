@@ -11,7 +11,7 @@ pub fn write_ascii(writer: &mut MutexGuard<Window>, x: usize, y: usize, c: char,
         for dy in 0..16 {
             for dx in 0..8 {
                 if (unsafe { f.get_unchecked(dy) } << dx) & 0x80 != 0 {
-                    writer.write(x + dx, y + dy, *color);
+                    writer.write(x + dx, y + dy, color);
                 }
             }
         }

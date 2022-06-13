@@ -17,7 +17,7 @@ const MARGIN: usize = 4;
 
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => ($crate::_print(format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::console::_print(format_args!($($arg)*)));
 }
 
 #[macro_export]
@@ -48,9 +48,8 @@ pub struct Console {
 static CONSOLE: OnceCell<Mutex<Console>> = OnceCell::uninit();
 
 impl Console {
-    pub fn new(color: PixelColor, bg: PixelColor) -> usize {
-        let writer = PixelWriter::get().unwrap().lock();
-        let (id, window) = WindowManager::new_window(writer.horizontal_resolution(), writer.vertical_resolution(), false, 0, 0);
+    pub fn new(color: PixelColor, bg: PixelColor, width: usize, height: usize) -> usize {
+        let (id, window) = WindowManager::new_window(width, height, false, 0, 0);
         CONSOLE.try_init_once(|| Mutex::new(Console {
             row: ROW,
             column: COL,
@@ -104,7 +103,7 @@ impl Console {
             for j in 0..self.column {
                 for y in 0..16 {
                     for x in 0..8 {
-                        writer.write(j * 8 + x + MARGIN, i * 16 + y + MARGIN, self.bg)
+                        writer.write(j * 8 + x + MARGIN, i * 16 + y + MARGIN, &self.bg)
                     }
                 }
                 // let c = self.buf[i + 1][j];
@@ -117,7 +116,7 @@ impl Console {
         for i in 0..self.column {
             for y in 0..16 {
                 for x in 0..8 {
-                    writer.write(i * 8 + x + MARGIN, 16 * (self.row - 1) + y + MARGIN, self.bg)
+                    writer.write(i * 8 + x + MARGIN, 16 * (self.row - 1) + y + MARGIN, &self.bg)
                 }
             }
             self.buf[self.row - 1][i] = 0 as char;

@@ -24,24 +24,28 @@ pub fn set_log_level(level: LogLevel) {
 macro_rules! log {
     ($c:expr, $($arg:tt)*) => {
         if $c.to_num() <= $crate::logger::LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed) {
-            $crate::println!($($arg)*)
+            $crate::serial_println!($($arg)*)
         }
     };
 }
 
 #[macro_export]
 macro_rules! debug {
-    ($($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Debug, $($arg)*))
+    ($fmt:expr) => ($crate::log!($crate::logger::LogLevel::Debug, concat!("Debug: ", $fmt)));
+    ($fmt:expr, $($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Debug, concat!("Debug: ", $fmt), $($arg)*));
 }
 #[macro_export]
 macro_rules! info {
-    ($($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Info, $($arg)*))
+    ($fmt:expr) => ($crate::log!($crate::logger::LogLevel::Info, concat!("Info: ", $fmt)));
+    ($fmt:expr, $($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Info, concat!("Info: ", $fmt), $($arg)*));
 }
 #[macro_export]
 macro_rules! warn {
-    ($($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Warn, $($arg)*))
+    ($fmt:expr) => ($crate::log!($crate::logger::LogLevel::Warn, concat!("Warn: ", $fmt)));
+    ($fmt:expr, $($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Warn, concat!("Warn: ", $fmt), $($arg)*));
 }
 #[macro_export]
 macro_rules! error {
-    ($($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Error, $($arg)*))
+    ($fmt:expr) => ($crate::log!($crate::logger::LogLevel::Error, concat!("Error: ", $fmt)));
+    ($fmt:expr, $($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Error, concat!("Error: ", $fmt), $($arg)*));
 }

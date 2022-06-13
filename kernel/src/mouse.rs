@@ -4,8 +4,7 @@ use spin::{MutexGuard, Mutex};
 
 use crate::{graphics::{
     PixelColor,
-    PixelWriter
-}, window::{Window, WindowManager}, timer::{lapic_timer_elapsed, stop_lapic_timer}, println};
+}, window::{Window, WindowManager}, timer::{lapic_timer_elapsed, stop_lapic_timer}, println, serial_println, debug};
 
 const MOUSE_CURSOR: [[u8; 3]; 14] = [
     [64, 0, 0],
@@ -58,13 +57,13 @@ impl MouseCursor {
                     let x_idx = row * 4 + i;
                     let y_idx = col;
                     if v & 0xc0 == 0x40 {
-                        window.write(x_idx, y_idx, PixelColor { r: 0, g: 0, b: 0, a: 255 })
+                        window.write(x_idx, y_idx, &PixelColor { r: 0, g: 0, b: 0, a: 255 })
                     }
                     if v & 0xc0 == 0x80 {
-                        window.write(x_idx, y_idx, PixelColor { r: 255, g: 255, b: 255, a: 255 })
+                        window.write(x_idx, y_idx, &PixelColor { r: 255, g: 255, b: 255, a: 255 })
                     }
                     if v & 0xc0 == 0x00 {
-                        window.write(x_idx, y_idx, PixelColor { r: 0, g: 0, b: 0, a: 0 })
+                        window.write(x_idx, y_idx, &PixelColor { r: 0, g: 0, b: 0, a: 0 })
                     }
                     v <<= 2;
                 }
