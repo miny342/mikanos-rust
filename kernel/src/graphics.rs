@@ -31,7 +31,8 @@ use common::writer_config::{
 pub struct PixelColor {
     pub r: u8,
     pub g: u8,
-    pub b: u8
+    pub b: u8,
+    pub a: u8,
 }
 
 fn write_rgb(pos: *mut u8, c: &PixelColor) {

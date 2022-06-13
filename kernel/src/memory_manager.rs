@@ -18,7 +18,7 @@ impl FrameID {
     }
 }
 
-pub const MAX_PHYSICAL_MEMORY_BYTES: usize = 128 * GIB;
+pub const MAX_PHYSICAL_MEMORY_BYTES: usize = 32 * GIB;  // if 128, cannot allocate kernel entry because alloc_map is huge
 pub const FRAME_COUNT: usize = MAX_PHYSICAL_MEMORY_BYTES / BYTES_PER_FRAME;
 
 type MapLineType = usize;

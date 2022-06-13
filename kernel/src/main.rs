@@ -20,6 +20,7 @@ mod paging;
 mod memory_manager;
 mod allocator;
 mod task;
+mod window;
 
 use core::alloc::Layout;
 use core::arch::{asm, global_asm};
@@ -37,6 +38,7 @@ use crate::memory_manager::{
     FrameID,
     BYTES_PER_FRAME, MANAGER
 };
+use crate::window::WindowManager;
 
 extern crate alloc;
 
@@ -80,10 +82,6 @@ static MAIN_Q: Q32<Message> = Q32::new();
 
 fn keyboard_handler(modifire: u8, pressing: [u8; 6]) {
 
-}
-
-fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
-    mouse::CURSOR.lock().move_relative(move_x, move_y)
 }
 
 #[no_mangle]
@@ -130,7 +128,7 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
 
     unsafe {
         PixelWriter::init(*config);
-        Console::init(PixelColor { r: 255, g: 255, b: 255}, PixelColor { r: 0, g: 0, b: 0 })
+        // Console::init(PixelColor { r: 255, g: 255, b: 255, a: 255}, PixelColor { r: 0, g: 0, b: 0, a: 255 })
     };
     let writer = PixelWriter::get().unwrap();
 
@@ -138,10 +136,17 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
         let mut writer = writer.lock();
         for x in 0..writer.horizontal_resolution() {
             for y in 0..writer.vertical_resolution() {
-                writer.write(x, y, &PixelColor { r: 0, g: 0, b: 0 });
+                writer.write(x, y, &PixelColor { r: 0, g: 0, b: 0, a: 255 });
             }
         }
     }
+
+    let mouse_id = mouse::MouseCursor::new();
+    let console_id = Console::new(PixelColor { r: 255, g: 255, b: 255, a: 255}, PixelColor { r: 0, g: 0, b: 0, a: 255 });
+
+    WindowManager::up_down(console_id, 0);
+    WindowManager::up_down(mouse_id, 1);
+    WindowManager::draw();
 
     println!("hello");
     set_log_level(LogLevel::Debug);
@@ -200,9 +205,8 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
 
     let xhc = unsafe {
-        Box::new(usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse_handler))
+        Box::leak(Box::new(usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse::mouse_handler)))
     };
-    let xhc = Box::leak(xhc);
     xhc.run();
     xhc.configure_port();
 

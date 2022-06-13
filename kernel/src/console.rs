@@ -1,11 +1,15 @@
 use core::fmt::{self, Write};
+use core::intrinsics::copy;
 use core::mem::MaybeUninit;
 
 use core::sync::atomic::{AtomicBool, Ordering};
+use alloc::sync::Arc;
+use conquer_once::spin::OnceCell;
 use spin::{MutexGuard, Mutex};
 
 use crate::graphics::*;
 use crate::font::*;
+use crate::window::{Window, WindowManager};
 
 const ROW: usize = 45;
 const COL: usize = 100;
@@ -23,11 +27,12 @@ macro_rules! println {
 }
 
 pub fn _print(args: fmt::Arguments) {
-    let c = Console::get().unwrap();
-    c.lock().write_fmt(args).unwrap();
+    if let Ok(c) = Console::get() {
+        c.lock().write_fmt(args).unwrap();
+        WindowManager::draw();
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
 pub struct Console {
     row: usize,
     column: usize,
@@ -36,61 +41,60 @@ pub struct Console {
     cursor_col: usize,
     color: PixelColor,
     bg: PixelColor,
+    window: Arc<Mutex<Window>>,
+    window_id: usize,
 }
 
-static mut CONSOLE: MaybeUninit<Mutex<Console>> = MaybeUninit::<Mutex<Console>>::uninit();
-static INITIALIZED: AtomicBool = AtomicBool::new(false);
+static CONSOLE: OnceCell<Mutex<Console>> = OnceCell::uninit();
 
 impl Console {
-    pub fn new(color: PixelColor, bg: PixelColor) -> Self {
-        Console {
+    pub fn new(color: PixelColor, bg: PixelColor) -> usize {
+        let writer = PixelWriter::get().unwrap().lock();
+        let (id, window) = WindowManager::new_window(writer.horizontal_resolution(), writer.vertical_resolution(), false, 0, 0);
+        CONSOLE.try_init_once(|| Mutex::new(Console {
             row: ROW,
             column: COL,
             buf: [[0 as char; COL]; ROW],
             cursor_row: 0,
             cursor_col: 0,
             color,
-            bg
-        }
-    }
-
-    pub unsafe fn init(color: PixelColor, bg: PixelColor ) {
-        CONSOLE.write(Mutex::new(Console::new(color, bg)));
-        INITIALIZED.store(true, Ordering::Relaxed);
+            bg,
+            window,
+            window_id: id,
+        })).unwrap();
+        id
     }
 
     pub fn get() -> Result<&'static Mutex<Self>, &'static str> {
-        if INITIALIZED.load(Ordering::Relaxed) {
-            Ok(unsafe { CONSOLE.assume_init_mut() })
-        } else {
-            Err("this is not uninitialized")
-        }
+        CONSOLE.get().ok_or_else(|| "console is not initialized")
     }
 
     pub fn put_string(&mut self, s: &str) {
-        let writer_ = PixelWriter::get().unwrap();
-        let mut writer = writer_.lock();
+        // let writer_ = PixelWriter::get().unwrap();
+        // let mut writer = writer_.lock();
+        let c = Arc::clone(&self.window);
+        let mut window = c.lock();
         for b in s.bytes() {
             let c = b as char;
             if c == '\n' {
-                self.new_line(&mut writer);
+                self.new_line(&mut window);
             } else if self.cursor_col < self.column {
-                self.write_ascii_with_update(&mut writer, c);
+                self.write_ascii_with_update(&mut window, c);
             }
             else {
-                self.new_line(&mut writer);
-                self.write_ascii_with_update(&mut writer, c);
+                self.new_line(&mut window);
+                self.write_ascii_with_update(&mut window, c);
             }
         }
     }
 
-    fn write_ascii_with_update(&mut self, writer: &mut MutexGuard<PixelWriter>, c: char) {
+    fn write_ascii_with_update(&mut self, writer: &mut MutexGuard<Window>, c: char) {
         write_ascii(writer, self.cursor_col * 8 + MARGIN, self.cursor_row * 16 + MARGIN, c, &self.color);
         self.buf[self.cursor_row][self.cursor_col] = c;
         self.cursor_col += 1;
     }
 
-    fn new_line(&mut self, writer: &mut MutexGuard<PixelWriter>) {
+    fn new_line(&mut self, writer: &mut MutexGuard<Window>) {
         self.cursor_col = 0;
         if self.cursor_row < self.row - 1 {
             self.cursor_row += 1;
@@ -100,7 +104,7 @@ impl Console {
             for j in 0..self.column {
                 for y in 0..16 {
                     for x in 0..8 {
-                        writer.write(j * 8 + x + MARGIN, i * 16 + y + MARGIN, &self.bg)
+                        writer.write(j * 8 + x + MARGIN, i * 16 + y + MARGIN, self.bg)
                     }
                 }
                 // let c = self.buf[i + 1][j];
@@ -113,7 +117,7 @@ impl Console {
         for i in 0..self.column {
             for y in 0..16 {
                 for x in 0..8 {
-                    writer.write(i * 8 + x + MARGIN, 16 * (self.row - 1) + y + MARGIN, &self.bg)
+                    writer.write(i * 8 + x + MARGIN, 16 * (self.row - 1) + y + MARGIN, self.bg)
                 }
             }
             self.buf[self.row - 1][i] = 0 as char;
