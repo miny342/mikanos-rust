@@ -1,3 +1,4 @@
+use core::intrinsics::{copy, write_bytes};
 use core::{mem::MaybeUninit, ptr::slice_from_raw_parts_mut, intrinsics::copy_nonoverlapping};
 use alloc::{vec::Vec, boxed::Box};
 use alloc::vec as m_vec;
@@ -107,7 +108,27 @@ impl FrameBuffer {
         }
     }
     pub fn write(&mut self, x: usize, y: usize, c: &PixelColor) {
+        if x >= self.vertical_resolution || y >= self.horizontal_resolution {
+            return;
+        }
         (self.write_)(self.frame_buffer, self.pixels_per_scan_line, x, y, c);
+    }
+    pub fn move_up(&mut self, value: usize, fill: u8) {
+        let per_pixel = bits_per_pixel(self.pixel_format).unwrap();
+        let bytes_per_pixel = (per_pixel + 7) / 8;
+        unsafe {
+            copy(
+                &self.frame_buffer[bytes_per_pixel * self.pixels_per_scan_line * value],
+                &mut self.frame_buffer[0],
+                bytes_per_pixel * self.pixels_per_scan_line * (self.vertical_resolution - value)
+            );
+            write_bytes(
+                &mut self.frame_buffer[bytes_per_pixel * self.pixels_per_scan_line * (self.vertical_resolution - value)],
+                fill,
+                bytes_per_pixel * self.pixels_per_scan_line * value
+            )
+        }
+
     }
 }
 

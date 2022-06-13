@@ -1,3 +1,4 @@
+use core::intrinsics::copy;
 use core::ptr::null_mut;
 use core::sync::atomic::AtomicUsize;
 
@@ -73,6 +74,9 @@ impl Window {
     pub fn move_relative(&mut self, diff_x: isize, diff_y: isize) {
         self.pos_x += diff_x;
         self.pos_y += diff_y;
+    }
+    pub fn move_up_buffer(&mut self, value: usize, fill: u8) {
+        self.shadow_buffer.move_up(value, fill);
     }
 }
 

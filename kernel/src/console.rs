@@ -36,7 +36,6 @@ pub fn _print(args: fmt::Arguments) {
 pub struct Console {
     row: usize,
     column: usize,
-    buf: [[char; COL]; ROW],
     cursor_row: usize,
     cursor_col: usize,
     color: PixelColor,
@@ -53,7 +52,6 @@ impl Console {
         CONSOLE.try_init_once(|| Mutex::new(Console {
             row: ROW,
             column: COL,
-            buf: [[0 as char; COL]; ROW],
             cursor_row: 0,
             cursor_col: 0,
             color,
@@ -69,8 +67,6 @@ impl Console {
     }
 
     pub fn put_string(&mut self, s: &str) {
-        // let writer_ = PixelWriter::get().unwrap();
-        // let mut writer = writer_.lock();
         let c = Arc::clone(&self.window);
         let mut window = c.lock();
         for b in s.bytes() {
@@ -89,7 +85,6 @@ impl Console {
 
     fn write_ascii_with_update(&mut self, writer: &mut MutexGuard<Window>, c: char) {
         write_ascii(writer, self.cursor_col * 8 + MARGIN, self.cursor_row * 16 + MARGIN, c, &self.color);
-        self.buf[self.cursor_row][self.cursor_col] = c;
         self.cursor_col += 1;
     }
 
@@ -99,28 +94,7 @@ impl Console {
             self.cursor_row += 1;
             return
         }
-        for i in 0..self.row - 1 {
-            for j in 0..self.column {
-                for y in 0..16 {
-                    for x in 0..8 {
-                        writer.write(j * 8 + x + MARGIN, i * 16 + y + MARGIN, &self.bg)
-                    }
-                }
-                // let c = self.buf[i + 1][j];
-                let c = unsafe { *self.buf.get_unchecked(i + 1).get_unchecked(j) };
-                write_ascii(writer, j * 8 + MARGIN, i * 16 + MARGIN, c, &self.color);
-                // self.buf[i][j] = c;
-                unsafe { *self.buf.get_unchecked_mut(i).get_unchecked_mut(j) = c; }
-            }
-        }
-        for i in 0..self.column {
-            for y in 0..16 {
-                for x in 0..8 {
-                    writer.write(i * 8 + x + MARGIN, 16 * (self.row - 1) + y + MARGIN, &self.bg)
-                }
-            }
-            self.buf[self.row - 1][i] = 0 as char;
-        }
+        writer.move_up_buffer(16, 0);
     }
 }
 

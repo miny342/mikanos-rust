@@ -4,7 +4,7 @@ use spin::{MutexGuard, Mutex};
 
 use crate::{graphics::{
     PixelColor,
-}, window::{Window, WindowManager}, timer::{lapic_timer_elapsed, stop_lapic_timer}, println, serial_println, debug};
+}, window::{Window, WindowManager}, timer::{lapic_timer_elapsed, stop_lapic_timer, start_lapic_timer}, println, serial_println, debug};
 
 const MOUSE_CURSOR: [[u8; 3]; 14] = [
     [64, 0, 0],
@@ -105,11 +105,15 @@ impl MouseCursor {
 pub fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
     // mouse::CURSOR.lock().move_relative(move_x, move_y)
     CURSOR.get().unwrap().lock().window.lock().move_relative(move_x as isize, move_y as isize);
-    crate::timer::start_lapic_timer();
+    start_lapic_timer();
     WindowManager::draw();
     let v = lapic_timer_elapsed();
     stop_lapic_timer();
-    println!("{}", v);
+    start_lapic_timer();
+    println!("mouse: {}", v);
+    let v = lapic_timer_elapsed();
+    stop_lapic_timer();
+    println!("print: {}", v);
 }
 
 
