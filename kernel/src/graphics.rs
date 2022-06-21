@@ -95,20 +95,20 @@ impl FrameBuffer {
         let mut dst_addr = &mut self.frame_buffer[bytes_per_pixel * self.pixels_per_scan_line * start_dst_y + start_dst_x] as *mut u8;
         let mut src_addr = &src.frame_buffer[bytes_per_pixel * src.pixels_per_scan_line * start_src_y + start_src_x] as *const u8;
 
-        debug!("dst from: {:p}, to: {:p}", self.frame_buffer.as_ptr(), self.frame_buffer.last().unwrap() as *const u8);
-        debug!("src from: {:p}, to: {:p}", src.frame_buffer.as_ptr(), src.frame_buffer.last().unwrap() as *const u8);
+        // debug!("dst from: {:p}, to: {:p}", self.frame_buffer.as_ptr(), self.frame_buffer.last().unwrap() as *const u8);
+        // debug!("src from: {:p}, to: {:p}", src.frame_buffer.as_ptr(), src.frame_buffer.last().unwrap() as *const u8);
 
         for _ in 0..(end_dst_y - start_dst_y) {
             unsafe {
                 copy_nonoverlapping(src_addr, dst_addr, per_copy);
-                debug!("dst: {:p}, src: {:p}, len: {}", dst_addr, src_addr, per_copy);
+                // debug!("dst: {:p}, src: {:p}, len: {}", dst_addr, src_addr, per_copy);
                 dst_addr = dst_addr.add(bytes_per_pixel * self.pixels_per_scan_line);
                 src_addr = src_addr.add(bytes_per_pixel * src.pixels_per_scan_line);
             }
         }
     }
     pub fn write(&mut self, x: usize, y: usize, c: &PixelColor) {
-        if x >= self.vertical_resolution || y >= self.horizontal_resolution {
+        if x >= self.horizontal_resolution || y >= self.vertical_resolution {
             return;
         }
         (self.write_)(self.frame_buffer, self.pixels_per_scan_line, x, y, c);

@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 
 #[derive(Debug, Clone, Copy)]
 pub enum LogLevel {
@@ -15,6 +15,7 @@ impl LogLevel {
 }
 
 pub static LOG_LEVEL: AtomicUsize = AtomicUsize::new(LogLevel::Warn.to_num());
+pub static SERIAL_USABLE: AtomicBool = AtomicBool::new(false);
 
 pub fn set_log_level(level: LogLevel) {
     LOG_LEVEL.store(level.to_num(), Ordering::Relaxed)
@@ -24,7 +25,11 @@ pub fn set_log_level(level: LogLevel) {
 macro_rules! log {
     ($c:expr, $($arg:tt)*) => {
         if $c.to_num() <= $crate::logger::LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed) {
-            $crate::serial_println!($($arg)*)
+            if $crate::logger::SERIAL_USABLE.load(core::sync::atomic::Ordering::Relaxed) {
+                $crate::serial_println!($($arg)*)
+            } else {
+                $crate::println!($($arg)*)
+            }
         }
     };
 }

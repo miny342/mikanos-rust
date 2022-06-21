@@ -1,4 +1,4 @@
-use core::{arch::asm, fmt::Write};
+use core::{arch::asm, fmt::Write, sync::atomic::AtomicBool};
 
 use spin::Mutex;
 
@@ -23,7 +23,7 @@ unsafe fn inb(port: u16) -> u8 {
     res
 }
 
-pub unsafe fn init_serial() {
+pub unsafe fn init_serial() -> bool {
     outb(PORT + 1, 0x00);
     outb(PORT + 3, 0x80);
     outb(PORT + 0, 0x03);
@@ -35,10 +35,12 @@ pub unsafe fn init_serial() {
     outb(PORT + 0, 0xAE);
 
     if inb(PORT + 0) != 0xAE {
-        loop {}
+        return false
     }
 
     outb(PORT + 4, 0x0f);
+    IS_USABLE.store(true, core::sync::atomic::Ordering::Relaxed);
+    return true
 }
 
 fn is_transmit_empty() -> u8 {
@@ -63,6 +65,7 @@ impl core::fmt::Write for Serial {
 }
 
 static SERIAL: Mutex<Serial> = Mutex::new(Serial);
+static IS_USABLE: AtomicBool = AtomicBool::new(false);
 
 #[macro_export]
 macro_rules! serial_print {
@@ -76,7 +79,9 @@ macro_rules! serial_println {
 }
 
 pub fn _serial_print(args: core::fmt::Arguments) {
-    SERIAL.lock().write_fmt(args).unwrap();
+    if IS_USABLE.load(core::sync::atomic::Ordering::Relaxed) {
+        SERIAL.lock().write_fmt(args).unwrap();
+    }
 }
 
 

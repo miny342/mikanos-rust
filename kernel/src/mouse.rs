@@ -28,18 +28,22 @@ static CURSOR: OnceCell<Mutex<MouseCursor>> = OnceCell::uninit(); // Mutex::new(
 pub struct MouseCursor {
     pos_x: usize,
     pos_y: usize,
+    screen_x: usize,
+    screen_y: usize,
     erase_color: PixelColor,
     window: Arc<Mutex<Window>>,
     window_id: usize
 }
 
 impl MouseCursor {
-    pub fn new() -> usize {
+    pub fn new(screen_x: usize, screen_y: usize) -> usize {
         let (id, w) = WindowManager::new_window(12, 14, true, 0, 0);
         CURSOR.try_init_once(|| Mutex::new(
             MouseCursor {
                 pos_x: 0,
                 pos_y: 0,
+                screen_x,
+                screen_y,
                 erase_color: PixelColor { r: 0, g: 0, b: 0, a: 0 },
                 window: w,
                 window_id: id,
@@ -103,17 +107,23 @@ impl MouseCursor {
 }
 
 pub fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
-    // mouse::CURSOR.lock().move_relative(move_x, move_y)
-    CURSOR.get().unwrap().lock().window.lock().move_relative(move_x as isize, move_y as isize);
-    start_lapic_timer();
+    let mut mouse = CURSOR.get().unwrap().lock();
+    let mut x = (mouse.pos_x as isize) + (move_x as isize);
+    let mut y = (mouse.pos_y as isize) + (move_y as isize);
+    if x < 0 {
+        x = 0;
+    } else if x >= mouse.screen_x as isize {
+        x = mouse.screen_x as isize - 1;
+    }
+    if y < 0 {
+        y = 0;
+    } else if y >= mouse.screen_y as isize {
+        y = mouse.screen_y as isize - 1;
+    }
+    mouse.pos_x = x as usize;
+    mouse.pos_y = y as usize;
+    mouse.window.lock().move_to(x, y);
     WindowManager::draw();
-    let v = lapic_timer_elapsed();
-    stop_lapic_timer();
-    start_lapic_timer();
-    println!("mouse: {}", v);
-    let v = lapic_timer_elapsed();
-    stop_lapic_timer();
-    println!("print: {}", v);
 }
 
 

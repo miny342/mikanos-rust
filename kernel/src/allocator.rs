@@ -36,7 +36,7 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
         let mut lock = self.center.lock();
         let align = layout.align();
         let size = if layout.size() < LIST_SIZE { LIST_SIZE } else { layout.size() };
-        debug!("allocate {}, {}", align, size);
+        // debug!("allocate {}, {}", align, size);
 
         let mut list = lock.clone();
         let mut prev = null_mut::<List>();
@@ -46,7 +46,7 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
         }
 
         loop {
-            debug!("list: {:p}, {:?}", list, *list);
+            // debug!("list: {:p}, {:?}", list, *list);
             let head = list as usize;
             let end = (*list).size + head;
 
@@ -96,12 +96,12 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let mut lock = self.center.lock();
         let size = if layout.size() < LIST_SIZE { LIST_SIZE } else { layout.size() };
-        println!("deallocate: {:p}, {}, {}", ptr, layout.size(), LIST_SIZE);
+        // println!("deallocate: {:p}, {}, {}", ptr, layout.size(), LIST_SIZE);
 
         let ptr = ptr as *mut List;
         let mut list = lock.clone();
         let mut prev = null_mut::<List>();
-        println!("list: {:p}, {:?}", list, *list);
+        // println!("list: {:p}, {:?}", list, *list);
 
         if (ptr as usize) < (list as usize) {
             if (ptr as usize) + size == (list as usize) {

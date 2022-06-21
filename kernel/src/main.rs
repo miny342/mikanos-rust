@@ -62,7 +62,7 @@ fn panic(info: &PanicInfo) -> ! {
     unsafe {
         asm!("cli");
     }
-    serial_println!("{}", info);
+    error!("{}", info);
     loop {
         unsafe {
             asm!("hlt");
@@ -82,8 +82,8 @@ fn keyboard_handler(modifire: u8, pressing: [u8; 6]) {
 
 #[no_mangle]
 extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const MemoryMap) -> ! {
-    unsafe { init_serial() }
-    set_log_level(LogLevel::Debug);
+    SERIAL_USABLE.store(unsafe { init_serial() }, core::sync::atomic::Ordering::Relaxed);
+    set_log_level(LogLevel::Error);
     segment::setup_segments();
     segment::set_ds_all(0);
     unsafe {
@@ -144,7 +144,7 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     let screen = unsafe { FrameBuffer::new(*config) };
     WindowManager::new(screen);
 
-    let mouse_id = mouse::MouseCursor::new();
+    let mouse_id = mouse::MouseCursor::new(width, height);
     let console_id = Console::new(PixelColor { r: 255, g: 255, b: 255, a: 255}, PixelColor { r: 0, g: 0, b: 0, a: 255 }, width, height);
 
     WindowManager::up_down(console_id, 0);
@@ -154,7 +154,7 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     initialize_apic_timer();
 
     println!("hello");
-    set_log_level(LogLevel::Error);
+    set_log_level(LogLevel::Debug);
 
     let res = pci::scan_all_bus();
     match res {
