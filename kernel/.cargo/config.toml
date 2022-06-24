@@ -11,7 +11,7 @@ panic = "abort"
 linker = "ld.lld"
 rustflags = [
     "-C", "no-redzone=yes",
-    "-C", "relocation-model=static",
+    "-C", "relocation-model=pic",
 
     "-C", "link-arg=--entry=kernel_main",
 ]

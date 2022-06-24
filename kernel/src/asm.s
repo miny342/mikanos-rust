@@ -5,7 +5,7 @@
 .section .text
 .global kernel_main
 kernel_main:
-    mov rsp, OFFSET kernel_stack + 1024 * 1024
+    lea rsp, kernel_stack[1024 * 1024 + rip]
     call kernel_main_new_stack
 .fin:
     hlt
@@ -14,7 +14,7 @@ kernel_main:
 .global set_csss
 set_csss:
     mov ss, si
-    mov rax, OFFSET .next
+    lea rax, .next[rip]
     push rdi
     push rax
     retfq

@@ -21,7 +21,7 @@ then
     sudo cp bootloader/target/x86_64-unknown-uefi/release/mikanos-rust.efi mnt/EFI/BOOT/BOOTX64.EFI
 else
     sudo cp kernel/target/x86_64-unknown-none/debug/kernel mnt/kernel
-    sudo cp bootloader/target/x86_64-unknown-uefi/release-with-debug/mikanos-rust.efi mnt/EFI/BOOT/BOOTX64.EFI
+    sudo cp bootloader/target/x86_64-unknown-uefi/debug/mikanos-rust.efi mnt/EFI/BOOT/BOOTX64.EFI
 fi
 
 sudo umount mnt
