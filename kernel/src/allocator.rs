@@ -6,15 +6,15 @@ use spin::Mutex;
 use crate::{println, debug};
 
 #[derive(Debug)]
-struct List {
-    size: usize,
-    next: *mut List,
+pub struct List {
+    pub size: usize,
+    pub next: *mut List,
 }
 
-const LIST_SIZE: usize = core::mem::size_of::<List>();
+pub const LIST_SIZE: usize = core::mem::size_of::<List>();
 
 pub struct LinkedListAllocator {
-    center: Mutex<*mut List>,
+    pub center: Mutex<*mut List>,
 }
 
 impl LinkedListAllocator {
@@ -36,7 +36,7 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
         let mut lock = self.center.lock();
         let align = layout.align();
         let size = if layout.size() < LIST_SIZE { LIST_SIZE } else { layout.size() };
-        // debug!("allocate {}, {}", align, size);
+        debug!("allocate {}, {}", align, size);
 
         let mut list = lock.clone();
         let mut prev = null_mut::<List>();
@@ -46,7 +46,7 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
         }
 
         loop {
-            // debug!("list: {:p}, {:?}", list, *list);
+            debug!("list: {:p}, {:?}", list, *list);
             let head = list as usize;
             let end = (*list).size + head;
 

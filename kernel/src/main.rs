@@ -204,6 +204,8 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
         pci::configure_msi_fixed_destination(xhc_dev, bsp_local_apic_id, pci::MSITriggerMode::Level, pci::MSIDeliveryMode::Fixed, interrupt::InterruptVector::XHCI as u8, 0);
     }
 
+    set_log_level(LogLevel::Debug);
+
     let xhc_bar = unsafe {pci::read_bar(xhc_dev, 0)}.unwrap();
     debug!("read bar: Success");
     let xhc_mmio_base = xhc_bar & !0xf;
