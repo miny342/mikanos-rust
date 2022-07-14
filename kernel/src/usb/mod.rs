@@ -615,7 +615,7 @@ impl TransferEventTRB {
                 x => x as u16,
             };
             if dev.buf[4] != 0 {
-                error!("{}", make_error!(Code::NotImplemented));
+                error!("buf4: {}, {}", dev.buf[4], make_error!(Code::NotImplemented));
                 return;
             }
             dev.get_descriptor(2, 0);
@@ -915,14 +915,18 @@ impl XhcController {
         loop {
             if *val & 0xff == 1 {
                 debug!("bios to os: {:x}", *val);
-                if *val >> 24 & 1 == 0 {
-                    let v = (val as u64 + 3) as *mut u8;
-                    debug!("bios to os: {:x}, {:x}", *val, *v);
-                    while *val >> 24 & 1 == 0 || *val >> 16 & 1 == 1 {
-                        *v = 1;
-                    }
+                if *val >> 16 & 1 != 0 {
+                    // let v = (val as u64 + 3) as *mut u8;
+                    // debug!("bios to os: {:x}, {:x}", *val, *v);
+                    *val |= 1 << 24;
+                    while *val >> 16 & 1 == 1 {}
                     debug!("success")
                 }
+                val = val.add(1);
+                let mut v = *val;
+                v &= (0x7 << 1) + (0xff << 5) + (0x7 << 17);
+                v |= 0x7 << 29;
+                *val = v;
                 break;
             }
             let next = (*val >> 8) & 0xff;
@@ -1131,9 +1135,10 @@ impl XhcController {
                 error!("{}", make_error!(Code::NotImplemented))
             }
             self.event_ring.clean(self);
-            if self.capability.usb_status().hchalted() {
-                panic!("halted")
-            }
+            debug!("usbsts: {}", self.capability.usb_status().data.read());
+            // if self.capability.usb_status().hchalted() {
+            //     panic!("halted")
+            // }
         }
     }
     }

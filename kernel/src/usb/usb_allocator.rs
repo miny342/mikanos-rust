@@ -28,7 +28,7 @@ impl LinkedListAllocator {
         if boundary == 0 {
             return self.alloc(core::alloc::Layout::from_size_align_unchecked(size, align))
         }
-        debug!("usballocate {}, {}, {}", align, size, boundary);
+        // debug!("usballocate {}, {}, {}", align, size, boundary);
 
         let mut lock = self.center.lock();
 
@@ -40,7 +40,7 @@ impl LinkedListAllocator {
         let mut prev = null_mut::<List>();
 
         loop {
-            debug!("usblist: {:p}, {:?}", list, *list);
+            // debug!("usblist: {:p}, {:?}", list, *list);
             let head = list as usize;
             let end = (*list).size + head;
 

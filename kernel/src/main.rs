@@ -190,6 +190,17 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
             let ehci2xhci_ports = pci::read_config_reg(xhc_dev, 0xd4);
             pci::write_config_reg(xhc_dev, 0xd0, ehci2xhci_ports);
             debug!("switch ehci2xhci: ss = {}, xhci = {}", superspeed_ports, ehci2xhci_ports);
+
+            let mut ports_available = pci::read_config_reg(xhc_dev, 0xdc);
+            debug!("configurable ports to enable superspeed: {:x}", ports_available);
+            pci::write_config_reg(xhc_dev, 0xd8, ports_available);
+            ports_available = pci::read_config_reg(xhc_dev, 0xdc);
+            debug!("usb 3.0 ports that are now enabled under xhci: {:x}", ports_available);
+            ports_available = pci::read_config_reg(xhc_dev, 0xd4);
+            debug!("configurable usb 2.0 ports to hand over to xhci: {:x}", ports_available);
+            pci::write_config_reg(xhc_dev, 0xd0, ports_available);
+            ports_available = pci::read_config_reg(xhc_dev, 0xd0);
+            debug!("usb 2.0 ports that are now switched over to xhci: {:x}", ports_available);
         }
     }
 
