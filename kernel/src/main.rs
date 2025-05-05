@@ -222,17 +222,27 @@ extern "efiapi" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     let xhc_mmio_base = xhc_bar & !0xf;
     debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
 
-    let xhc = unsafe {
-        Box::leak(Box::new(usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse::mouse_handler)))
-    };
-    xhc.run();
-    xhc.configure_port();
+    for _ in 0..5 {
+        let mut xhc = unsafe {
+            Box::new(usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse::mouse_handler))
+        };
+        xhc.run();
+        xhc.configure_port();
+        unsafe { asm!("sti") };
+        while !xhc.capability.usb_status().hchalted() {
+            xhc.process_event();
+        }
+        unsafe { asm!("cli") };
+        debug!("xhc error! restarting...");
+    }
 
-    unsafe { asm!("sti") }
 
-    let mut executor = task::executor::Executor::new();
-    executor.spawn(task::Task::new(xhc.process_event()));
-    executor.run();
+
+    // unsafe { asm!("sti") }
+
+    // let mut executor = task::executor::Executor::new();
+    // executor.spawn(task::Task::new(xhc.process_event()));
+    // executor.run();
 
     // loop {
     //     unsafe { asm!("cli") };

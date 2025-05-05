@@ -23,12 +23,12 @@ use crate::error::*;
 
 mod usb_allocator;
 
-static ALLOCATOR: LinkedListAllocator = LinkedListAllocator::empty();
+// static ALLOCATOR: LinkedListAllocator = LinkedListAllocator::empty();
 
 type HandleError<T> = Result<T, Error>;
 
 #[repr(C)]
-struct UsbStatusRegister {
+pub struct UsbStatusRegister {
     data: RW<u32>
 }
 
@@ -161,7 +161,7 @@ impl DoorbellRegister {
 
 
 #[repr(C)]
-struct CapabilityRegisters {
+pub struct CapabilityRegisters {
     // length: u8,
     // rsvdz1: u8,
     // hci_version: u16,
@@ -271,9 +271,103 @@ struct InputContext {
     ep_ctx: [EndpointContext; 31]
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SlotContext64 {
+    data: [u32; 16]
+}
+
+impl SlotContext64 {
+    fn root_hub_port_num(&self) -> u8 {
+        (self.data[1] >> 16 & 0xff) as u8
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EndpointContext64 {
+    data: [u32; 16]
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct DeviceContext64 {
+    slot_ctx: SlotContext64,
+    ep_ctx: [EndpointContext64; 31]
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InputControlContext64 {
+    data: [u32; 16]
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct InputContext64 {
+    input_control_ctx: InputControlContext64,
+    slot_ctx: SlotContext64,
+    ep_ctx: [EndpointContext64; 31]
+}
+
+enum DeviceContextEnum {
+    V1(&'static DeviceContext),
+    V2(&'static DeviceContext64)
+}
+
+impl DeviceContextEnum {
+    fn root_hub_port_num(&self) -> u8 {
+        match self {
+            DeviceContextEnum::V1(x) => x.slot_ctx.root_hub_port_num(),
+            DeviceContextEnum::V2(x) => x.slot_ctx.root_hub_port_num(),
+        }
+    }
+    fn slot_ctx(&self) -> &[u32] {
+        match self {
+            DeviceContextEnum::V1(x) => &x.slot_ctx.data,
+            DeviceContextEnum::V2(x) => &x.slot_ctx.data,
+        }
+    }
+    fn as_inner_ptr(&self) -> u64 {
+        match self {
+            DeviceContextEnum::V1(x) => *x as *const DeviceContext as u64,
+            DeviceContextEnum::V2(x) => *x as *const DeviceContext64 as u64,
+        }
+    }
+}
+
+enum InputContextEnum {
+    V1(&'static mut InputContext),
+    V2(&'static mut InputContext64),
+}
+
+impl InputContextEnum {
+    fn input_control_ctx(&mut self) -> &mut [u32] {
+        match self {
+            InputContextEnum::V1(x) => &mut x.input_control_ctx.data,
+            InputContextEnum::V2(x) => &mut x.input_control_ctx.data,
+        }
+    }
+    fn slot_ctx(&mut self) -> &mut [u32] {
+        match self {
+            InputContextEnum::V1(x) => &mut x.slot_ctx.data,
+            InputContextEnum::V2(x) => &mut x.slot_ctx.data,
+        }
+    }
+    fn ep_ctx(&mut self, idx: usize) -> &mut [u32] {
+        match self {
+            InputContextEnum::V1(x) => &mut x.ep_ctx[idx].data,
+            InputContextEnum::V2(x) => &mut x.ep_ctx[idx].data,
+        }
+    }
+    fn as_inner_ptr(&self) -> u64 {
+        match self {
+            InputContextEnum::V1(x) => *x as *const InputContext as u64,
+            InputContextEnum::V2(x) => *x as *const InputContext64 as u64,
+        }
+    }
+}
+
 struct XhciDevice {
-    device_ctx: &'static DeviceContext,
-    input_ctx: &'static mut InputContext,
+    device_ctx: DeviceContextEnum,
+    input_ctx: InputContextEnum,
     slot_id: u8,
     buf: [u8; 512],
     doorbell: u64,
@@ -421,7 +515,7 @@ impl TRB {
             ]
         }
     }
-    pub fn address_device_command_trb(input_context_ptr: *const InputContext, slot_id: u8) -> TRB {
+    pub fn address_device_command_trb(input_context_ptr: u64, slot_id: u8) -> TRB {
         let ptr = input_context_ptr as u64;
         assert!(ptr & 0x3f == 0);
         TRB {
@@ -491,7 +585,7 @@ impl CommandCompletionEventTRB {
         } else if ty == 11 { // address device command
             let mut lock = DEVICES_MEM[self.slot_id() as usize].lock();
             let dev = lock.as_mut().unwrap();
-            let port_id = dev.device_ctx.slot_ctx.root_hub_port_num();
+            let port_id = dev.device_ctx.root_hub_port_num();
             if port_id != xhc.addressing_port || xhc.port_config_phase[port_id as usize] != ConfigPhase::AddressingDevice {
                 panic!()
             }
@@ -621,13 +715,13 @@ impl TransferEventTRB {
             dev.get_descriptor(2, 0);
         } else if (trb.data[0] >> 8) & 0xff == 6 && (trb.data[0] >> 24)  == 0x02 { // get_descriptor configuration 0
             debug!("get configuration");
-            for i in dev.input_ctx.input_control_ctx.data.iter_mut() {
+            for i in dev.input_ctx.input_control_ctx().iter_mut() {
                 *i = 0;
             }
             for i in 0..8 {
-                dev.input_ctx.slot_ctx.data[i] = dev.device_ctx.slot_ctx.data[i];
+                dev.input_ctx.slot_ctx()[i] = dev.device_ctx.slot_ctx()[i];
             }
-            dev.input_ctx.input_control_ctx.data[1] = 1;
+            dev.input_ctx.input_control_ctx()[1] = 1;
 
             let mut base = 0;
             let max = dev.buf[2] as usize;
@@ -651,7 +745,7 @@ impl TransferEventTRB {
                         debug!("endpoint found");
                         let dci = (buf[2] & 0b111) * 2 + (buf[2] >> 7);
                         debug!("buf[2] & 0b111: {}, buf[2] >> 7: {}", buf[2] & 0b111, buf[2] >> 7);
-                        dev.input_ctx.input_control_ctx.data[1] |= 1 << (dci as u32);
+                        dev.input_ctx.input_control_ctx()[1] |= 1 << (dci as u32);
                         let ptr = dev.transfer_rings[dci as usize - 1].x.as_ptr() as u64;
                         let ep_type = match (buf[2] >> 7, buf[3] & 0b11) {
                             (0, 1) => 1u32,
@@ -665,16 +759,24 @@ impl TransferEventTRB {
                         };
                         let w_max_packet_size = (buf[4] as u32) | (buf[5] as u32) << 2;
                         let b_interval = buf[6] as u32;
-                        dev.input_ctx.ep_ctx[dci as usize - 1].data = [
-                            b_interval << 16,
-                            ep_type << 3 | w_max_packet_size << 16 | 3 << 1,
-                            (ptr & 0xffffffff) as u32 | 1,
-                            (ptr >> 32) as u32,
-                            0,
-                            0,
-                            0,
-                            0
-                        ];
+                        // dev.input_ctx.ep_ctx[dci as usize - 1].data = [
+                        //     b_interval << 16,
+                        //     ep_type << 3 | w_max_packet_size << 16 | 3 << 1,
+                        //     (ptr & 0xffffffff) as u32 | 1,
+                        //     (ptr >> 32) as u32,
+                        //     0,
+                        //     0,
+                        //     0,
+                        //     0
+                        // ];
+                        let ep_ctx = dev.input_ctx.ep_ctx(dci as usize - 1);
+                        for i in ep_ctx.iter_mut() {
+                            *i = 0;
+                        }
+                        ep_ctx[0] = b_interval << 16;
+                        ep_ctx[1] = ep_type << 3 | w_max_packet_size << 16 | 3 << 1;
+                        ep_ctx[2] = (ptr & 0xffffffff) as u32 | 1;
+                        ep_ctx[3] = (ptr >> 32) as u32;
                     },
                     33 => { // HID
                         debug!("hid found");
@@ -685,8 +787,8 @@ impl TransferEventTRB {
                 }
                 base += dev.buf[base] as usize;
             }
-            debug!("input context control: {:?}", dev.input_ctx.input_control_ctx.data);
-            let ptr = dev.input_ctx.input_control_ctx.data.as_ptr() as u64;
+            debug!("input context control: {:?}", dev.input_ctx.input_control_ctx());
+            let ptr = dev.input_ctx.input_control_ctx().as_ptr() as u64;
             assert!(ptr & 0x3f == 0);
             xhc.command_ring.push(TRB {
                 data: [
@@ -871,6 +973,7 @@ struct InterruptRegister {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConfigPhase {
+    Broken,
     NotConnected,
     WaitingAddressed,
     ResettingPort,
@@ -882,7 +985,7 @@ enum ConfigPhase {
 }
 
 pub struct XhcController {
-    capability: &'static CapabilityRegisters,
+    pub capability: &'static CapabilityRegisters,
     port_config_phase: [ConfigPhase; 256],
     addressing_port: u8,
     keyboard_handler: fn(modifire: u8, pressing: [u8; 6]),
@@ -891,6 +994,8 @@ pub struct XhcController {
     command_ring: MemPoolCrTRB,
     event_ring: MemPoolErTRB,
     erste: &'static mut MemPoolERSTE,
+    allocator: LinkedListAllocator,
+    center: usize,
 }
 
 impl XhcController {
@@ -898,16 +1003,17 @@ impl XhcController {
         let mem = Vec::<u8>::with_capacity(1024 * 1024 * 4).leak();
         let head = mem as *mut [u8] as *mut u8 as usize;
         let end = head + 1024 * 1024 * 4;
-        ALLOCATOR.init(head, end);
+        let allocator = LinkedListAllocator::empty();
+        allocator.init(head, end);
 
 
 
         let cap_reg = &*(mmio_base as *const CapabilityRegisters);
         debug!("cap reg: {}", cap_reg.length());
 
-        if cap_reg.hcc_params1.read() & 0b100 != 0 {
-            panic!("not support 64bit context now")
-        }
+        // if cap_reg.hcc_params1.read() & 0b100 != 0 {
+        //     panic!("not support 64bit context now")
+        // }
 
         let ptr = mmio_base + (cap_reg.hcc_params1.read() >> 16 << 2) as u64;
         let ptr = ptr as *mut u32;
@@ -964,22 +1070,22 @@ impl XhcController {
         config_reg.set_max_slots_en(max_slots_en);
 
         let dcbaap = cap_reg.dcbaap();
-        let ptr = ALLOCATOR.alloc_with_boundary_zeroed(size_of::<DcbaaTy>(), 64, 4096);
+        let ptr = allocator.alloc_with_boundary_zeroed(size_of::<DcbaaTy>(), 64, 4096);
         let dcbaap_ptr = &mut *(ptr as *mut DcbaaTy); // DCBAA.lock().x.as_ptr() as u64;
         dcbaap.set_dcbaap(ptr as u64);
 
         let crcr = cap_reg.crcr();
-        let ptr = ALLOCATOR.alloc_with_boundary_zeroed(size_of::<TRBbufTy>(), 64, 65536); // CR_BUF.lock().x.as_ptr() as u64;
+        let ptr = allocator.alloc_with_boundary_zeroed(size_of::<TRBbufTy>(), 64, 65536); // CR_BUF.lock().x.as_ptr() as u64;
         let cr_ptr = &mut *(ptr as *mut TRBbufTy);
         assert!(ptr as u64 & 0x3f == 0);
         crcr.set_value(ptr as u64 | 1);
         // crcr.set_pointer(ptr);
         // crcr.set_ring_cycle_state(true);
 
-        let ptr = ALLOCATOR.alloc_with_boundary_zeroed(size_of::<TRBbufTy>(), 64, 65536); // ER_BUF.lock().x.as_ptr() as u64;
+        let ptr = allocator.alloc_with_boundary_zeroed(size_of::<TRBbufTy>(), 64, 65536); // ER_BUF.lock().x.as_ptr() as u64;
         let er_ptr = &mut *(ptr as *mut TRBbufTy);
         assert!(ptr as u64 & 0x3f == 0);
-        let erste_ptr = ALLOCATOR.alloc_with_boundary_zeroed(size_of::<MemPoolERSTE>(), 64, 0);
+        let erste_ptr = allocator.alloc_with_boundary_zeroed(size_of::<MemPoolERSTE>(), 64, 0);
         let mut erste_lock = &mut *(erste_ptr as *mut MemPoolERSTE); // ERSTE_BUF.lock();
         erste_lock.x[0].addr = ptr as u64;
         erste_lock.x[0].size = TRB_BUF_LEN as u16;
@@ -994,9 +1100,11 @@ impl XhcController {
         interrupt_regs[0].moderation.write(4000);
         interrupt_regs[0].management.write(0x3);
         usbcmd.set_interrupt_enable(true);
+        let mut port_config_phase = [ConfigPhase::NotConnected; 256];
+        port_config_phase[15] = ConfigPhase::Broken;
         XhcController {
             capability: cap_reg,
-            port_config_phase: [ConfigPhase::NotConnected; 256],
+            port_config_phase,
             addressing_port: 0,
             keyboard_handler,
             mouse_handler,
@@ -1004,6 +1112,8 @@ impl XhcController {
             command_ring: MemPoolCrTRB { x: cr_ptr, index: 0, cycle: true },
             event_ring: MemPoolErTRB { x: er_ptr, index: 0, cycle: true },
             erste: erste_lock,
+            allocator,
+            center: head,
         }
     }
     pub fn run(&self) {
@@ -1057,9 +1167,23 @@ impl XhcController {
 
     pub fn address_deivce(&mut self, slot_id: u8, port_num: u8) {
         let mut lock = DEVICES_MEM[slot_id as usize].lock();
+        let (device_ctx, input_ctx) = unsafe {
+            if self.capability.hcc_params1.read() & 0b100 != 0 {
+                (
+                    DeviceContextEnum::V2(&*(self.allocator.alloc_with_boundary_zeroed(size_of::<DeviceContext64>(), 64, 4096) as *const DeviceContext64)),
+                    InputContextEnum::V2(&mut *(self.allocator.alloc_with_boundary_zeroed(size_of::<InputContext64>(), 64, 4096) as *mut InputContext64))
+                )
+            } else {
+                (
+                    DeviceContextEnum::V1(&*(self.allocator.alloc_with_boundary_zeroed(size_of::<DeviceContext>(), 64, 4096) as *const DeviceContext)),
+                    InputContextEnum::V1(&mut *(self.allocator.alloc_with_boundary_zeroed(size_of::<InputContext>(), 64, 4096) as *mut InputContext))
+                )
+            }
+        };
+
         *lock = Some(XhciDevice {
-            device_ctx: unsafe { &*(ALLOCATOR.alloc_with_boundary_zeroed(size_of::<DeviceContext>(), 64, 4096) as *const DeviceContext) },
-            input_ctx: unsafe { &mut *(ALLOCATOR.alloc_with_boundary_zeroed(size_of::<InputContext>(), 64, 4096) as *mut InputContext) },
+            device_ctx,
+            input_ctx,
             slot_id,
             buf: [0; 512],
             doorbell: &mut self.capability.doorbell()[slot_id as usize] as *mut DoorbellRegister as u64,
@@ -1071,7 +1195,7 @@ impl XhcController {
                 let mut arr: [MaybeUninit<MemPoolTrTRB>; 31] = MaybeUninit::uninit().assume_init();
                 for elem in arr.iter_mut() {
                     elem.write(MemPoolTrTRB {
-                        x: &mut *(ALLOCATOR.alloc_with_boundary_zeroed(size_of::<TRBbufTy>(), 64, 65536) as *mut TRBbufTy),
+                        x: &mut *(self.allocator.alloc_with_boundary_zeroed(size_of::<TRBbufTy>(), 64, 65536) as *mut TRBbufTy),
                         index: 0,
                         cycle: true
                     });
@@ -1082,15 +1206,15 @@ impl XhcController {
         let dev = lock.as_mut().unwrap();
         // dev.slot_id = slot_id;
         // dev.doorbell = &mut self.capability.doorbell()[slot_id as usize] as *mut DoorbellRegister as u64;
-        self.dcbaa[slot_id as usize] = dev.device_ctx as *const DeviceContext as u64;
-        for d in dev.input_ctx.input_control_ctx.data.iter_mut() {
+        self.dcbaa[slot_id as usize] = dev.device_ctx.as_inner_ptr();
+        for d in dev.input_ctx.input_control_ctx().iter_mut() {
             *d = 0;
         }
-        dev.input_ctx.input_control_ctx.data[1] |= 0b11;
+        dev.input_ctx.input_control_ctx()[1] |= 0b11;
 
         let port = self.capability.port_sc(port_num);
-        dev.input_ctx.slot_ctx.data[0] = ((port.port_speed() as u32) << 20) | 1 << 27;
-        dev.input_ctx.slot_ctx.data[1] = (port_num as u32) << 16;
+        dev.input_ctx.slot_ctx()[0] = ((port.port_speed() as u32) << 20) | 1 << 27;
+        dev.input_ctx.slot_ctx()[1] = (port_num as u32) << 16;
 
         let max_packet = match port.port_speed() {
             1 | 2 => 8u32,
@@ -1103,19 +1227,18 @@ impl XhcController {
 
         let ptr = dev.transfer_rings[0].x.as_ptr() as *const TRB as u64;
         assert!(ptr & 0x3f == 0);
-        dev.input_ctx.ep_ctx[0].data[1] = max_packet << 16 | 4 << 3 | 3 << 1;
-        dev.input_ctx.ep_ctx[0].data[2] = (ptr & 0xffffffc0) as u32 | 1;
-        dev.input_ctx.ep_ctx[0].data[3] = (ptr >> 32) as u32;
+        dev.input_ctx.ep_ctx(0)[1] = max_packet << 16 | 4 << 3 | 3 << 1;
+        dev.input_ctx.ep_ctx(0)[2] = (ptr & 0xffffffc0) as u32 | 1;
+        dev.input_ctx.ep_ctx(0)[3] = (ptr >> 32) as u32;
 
         self.port_config_phase[port_num as usize] = ConfigPhase::AddressingDevice;
 
-        self.command_ring.push(TRB::address_device_command_trb(dev.input_ctx, slot_id));
+        self.command_ring.push(TRB::address_device_command_trb(dev.input_ctx.as_inner_ptr(), slot_id));
         self.capability.doorbell()[0].ring(0, 0);
     }
 
-    pub async fn process_event(&mut self) {
+    pub fn process_event(&mut self) {
         // let mut er_lock = ER_BUF.lock();
-        loop {
         while let Some(trb) = self.event_ring.next_() {
             let v1 = trb.data[0];
             let v2 = trb.data[1];
@@ -1141,6 +1264,14 @@ impl XhcController {
             // }
         }
     }
+}
+
+impl Drop for XhcController {
+    fn drop(&mut self) {
+        unsafe {
+            let v = Vec::from_raw_parts(self.center as *mut u8, 1024 * 1024 * 4, 1024 * 1024 * 4);
+            drop(v);
+        }
     }
 }
 
