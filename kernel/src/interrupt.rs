@@ -83,8 +83,8 @@ pub fn get_cs() -> u16 {
     let ret: u16;
     unsafe {
         asm!(
-            "mov ax, cs",
-            out("ax") ret,
+            "mov {:x}, cs",
+            out(reg) ret,
         )
     }
     ret

@@ -52,6 +52,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "elf_rs",
+ "log",
  "uefi",
 ]
 

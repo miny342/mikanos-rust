@@ -2,11 +2,10 @@
 #![no_main]
 
 use elf_rs::ElfFile;
+use log::info;
 use uefi::boot::PAGE_SIZE;
 use uefi::mem::memory_map::MemoryMap;
 use uefi::mem::memory_map::MemoryMapOwned;
-use uefi::println;
-use uefi::CStr16;
 use uefi::prelude::*;
 use uefi::proto::console::gop::GraphicsOutput;
 use uefi::proto::media::file::Directory;
@@ -23,11 +22,7 @@ use elf_rs::ProgramType;
 
 use core::arch::asm;
 use core::ops::Deref;
-use core::panic::PanicInfo;
-
-use common::writer_config;
-
-use writer_config::*;
+use common::writer_config::*;
 
 #[macro_use]
 extern crate alloc;
@@ -37,16 +32,6 @@ struct Rela {
     r_offset: u64,
     r_info: u64,
     r_addend: i64,
-}
-
-#[panic_handler]
-fn panic_handler(panic_info: &PanicInfo) -> ! {
-    println!("panic: {}", panic_info.message());
-    loop {
-        unsafe {
-            asm!("hlt");
-        }
-    }
 }
 
 fn write_memmap(dir: &mut Directory) -> uefi::Result {
@@ -67,9 +52,9 @@ fn write_memmap(dir: &mut Directory) -> uefi::Result {
     Ok(())
 }
 
-fn load_kernel(dir: &mut Directory) -> Option<extern "efiapi" fn(*const common::writer_config::FrameBufferConfig, *const MemoryMapOwned) -> !> {
+fn load_kernel(dir: &mut Directory) -> Option<extern "sysv64" fn(*const FrameBufferConfig, *const MemoryMapOwned) -> !> {
     let mut str_buf = [0; 100];
-    let name = CStr16::from_str_with_buf("\\kernel", &mut str_buf).unwrap();
+    let name = uefi::CStr16::from_str_with_buf("\\kernel", &mut str_buf).unwrap();
     let kernel_file = dir.open(name, FileMode::Read, FileAttribute::READ_ONLY).unwrap().into_type().unwrap();
     if let Regular(mut kernel_file) = kernel_file {
         let buf = &mut [0u8; 2048];
@@ -86,7 +71,7 @@ fn load_kernel(dir: &mut Directory) -> Option<extern "efiapi" fn(*const common::
         let elf = Elf::from_bytes(kernel_buffer_slice).unwrap();
         let elf64 = match elf {
             Elf::Elf64(elf) => elf,
-            _ => panic!()
+            _ => panic!("cannot run elf32 {:?}", elf)
         };
         let last = {
             // let mut first = usize::MAX;
@@ -158,10 +143,10 @@ fn load_kernel(dir: &mut Directory) -> Option<extern "efiapi" fn(*const common::
 
         let entry_point_address =  unsafe { *(kernel_slice.as_ptr().add(24) as *const usize) };
         let entry_point = entry_point_address + kernel_slice.as_ptr() as usize;
-        println!("entry point: {:x}", entry_point);
+        info!("entry point: {:x}", entry_point);
 
         let kernel_entry = unsafe {
-            let f: extern "efiapi" fn(*const FrameBufferConfig, *const MemoryMapOwned) -> ! = core::mem::transmute(entry_point);
+            let f: extern "sysv64" fn(*const FrameBufferConfig, *const MemoryMapOwned) -> ! = core::mem::transmute(entry_point);
             f
         };
         Some(kernel_entry)
@@ -174,12 +159,16 @@ fn load_kernel(dir: &mut Directory) -> Option<extern "efiapi" fn(*const common::
 fn main() -> Status {
     uefi::helpers::init().unwrap();
 
-    println!("Hello, World!");
-
+    info!("Hello, World!");
     let mut fs = boot::get_image_file_system(boot::image_handle()).unwrap();
     let mut root_dir = fs.open_volume().unwrap();
+    let k = load_kernel(&mut root_dir);
 
-    let _ = write_memmap(&mut root_dir);
+    let d = write_memmap(&mut root_dir);
+    info!("write_memmap: {:?}", d);
+
+    drop(root_dir);
+    drop(fs);
 
     let gop_handle = boot::get_handle_for_protocol::<GraphicsOutput>().unwrap();
     let mut gop = boot::open_protocol_exclusive::<GraphicsOutput>(gop_handle).unwrap();
@@ -203,11 +192,10 @@ fn main() -> Status {
         },
     };
 
-    if let Some(kernel_entry) = load_kernel(&mut root_dir) {
+    if let Some(kernel_entry) = k {
         let memmap = unsafe { boot::exit_boot_services(None) };
         kernel_entry(&config, &memmap);
     }
-    println!("kernel load error");
     loop {
         unsafe {
             asm!("hlt");

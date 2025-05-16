@@ -146,3 +146,46 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
         }
     }
 }
+
+struct SimplestAllocatorData {
+    head: usize,
+    end: usize,
+}
+
+pub struct SimplestAllocator(Mutex<SimplestAllocatorData>);
+
+impl SimplestAllocator {
+    pub const fn empty() -> Self {
+        SimplestAllocator(Mutex::new(SimplestAllocatorData { head: 0, end: 0 }))
+    }
+    pub unsafe fn init(&self, head: usize, end: usize) {
+        let mut l = self.0.lock();
+        l.head = head;
+        l.end = end;
+    }
+}
+
+unsafe impl GlobalAlloc for SimplestAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let mut l = self.0.lock();
+        let size = layout.size();
+        let align = layout.align();
+
+        let head = if l.head % align == 0 {
+            l.head
+        } else {
+            let aligned_head = (l.head - l.head % align) + align;
+            aligned_head
+        };
+
+        l.head = head + size;
+        if l.head > l.end {
+            null_mut()
+        } else {
+            head as *mut u8
+        }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+
+    }
+}

@@ -1,3 +1,5 @@
+use spin::Mutex;
+
 use crate::make_error;
 
 const KIB: usize = 1024;
@@ -24,7 +26,7 @@ pub const FRAME_COUNT: usize = MAX_PHYSICAL_MEMORY_BYTES / BYTES_PER_FRAME;
 type MapLineType = usize;
 pub const BITS_PER_MAPLINE: usize = 8 * core::mem::size_of::<MapLineType>();
 
-pub static mut MANAGER: BitmapMemoryManager = BitmapMemoryManager::new(); // todo fix
+pub static MANAGER: Mutex<BitmapMemoryManager> = Mutex::new(BitmapMemoryManager::new()); // todo fix
 
 pub struct BitmapMemoryManager {
     alloc_map: [MapLineType; FRAME_COUNT / BITS_PER_MAPLINE],

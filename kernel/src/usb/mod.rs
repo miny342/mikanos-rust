@@ -1258,11 +1258,12 @@ impl XhcController {
                 error!("{}", make_error!(Code::NotImplemented))
             }
             self.event_ring.clean(self);
-            debug!("usbsts: {}", self.capability.usb_status().data.read());
+
             // if self.capability.usb_status().hchalted() {
             //     panic!("halted")
             // }
         }
+        debug!("usbsts: {}", self.capability.usb_status().data.read());
     }
 }
 
