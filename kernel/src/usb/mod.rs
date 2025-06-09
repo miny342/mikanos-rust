@@ -1,3 +1,4 @@
+use core::alloc::Layout;
 use core::intrinsics::transmute;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{slice_from_raw_parts_mut, write_volatile};
@@ -14,7 +15,7 @@ use spin::Mutex;
 use volatile_register::{RW, RO, WO};
 use heapless::FnvIndexMap;
 
-use crate::allocator::LinkedListAllocator;
+use crate::allocator::{LinkedListAllocator, SimplestAllocator};
 use crate::{println, debug, make_error, error, print};
 use crate::pci::Device;
 use crate::error::*;
@@ -197,8 +198,12 @@ impl CapabilityRegisters {
     pub fn max_ports(&self) -> u8 {
         (self.hcs_params1.read() >> 24) as u8
     }
-    pub fn pagesize(&self) -> u32 {
-        unsafe { *((self.op_base() + 0x8) as *const u32) }
+    pub fn max_interrupts(&self) -> u16 {
+        ((self.hcs_params1.read() >> 8) & 0x3ff) as u16
+    }
+    pub fn pagesize(&self) -> usize {
+        let bit = unsafe { *((self.op_base() + 0x8) as *const u32) };
+        1 << (bit.trailing_zeros() as usize + 12)
     }
     pub fn configure(&self) -> &mut ConfigureRegister {
         unsafe { &mut *((self.op_base() + 0x38) as *mut ConfigureRegister) }
@@ -220,9 +225,12 @@ impl CapabilityRegisters {
     }
 }
 
-const max_slots_en: u8 = 8;
+const MAX_SLOTS_EN: u8 = 8;
 
-type DcbaaTy = [u64; max_slots_en as usize + 1];
+type DcbaaTy = [u64; MAX_SLOTS_EN as usize + 1];
+
+#[repr(align(64))]
+struct DCBAA([u64; MAX_SLOTS_EN as usize + 1]);
 // struct MemPool([u64; max_slots_en as usize + 1]);
 
 // static DCBAA: Mutex<MemPool> = Mutex::new(MemPool { x: [0; max_slots_en as usize + 1] });
@@ -251,7 +259,7 @@ struct EndpointContext {
     data: [u32; 8]
 }
 
-#[repr(C)]
+#[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 struct DeviceContext {
     slot_ctx: SlotContext,
@@ -263,7 +271,7 @@ struct InputControlContext {
     data: [u32; 8]
 }
 
-#[repr(C)]
+#[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 struct InputContext {
     input_control_ctx: InputControlContext,
@@ -287,7 +295,7 @@ struct EndpointContext64 {
     data: [u32; 16]
 }
 
-#[repr(C)]
+#[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 struct DeviceContext64 {
     slot_ctx: SlotContext64,
@@ -299,7 +307,7 @@ struct InputControlContext64 {
     data: [u32; 16]
 }
 
-#[repr(C)]
+#[repr(C, align(64))]
 #[derive(Debug, Clone, Copy)]
 struct InputContext64 {
     input_control_ctx: InputControlContext64,
@@ -459,12 +467,12 @@ impl XhciDevice {
     }
 }
 
-type DeviceMemType = [Mutex<Option<XhciDevice>>; (max_slots_en + 1) as usize];
+type DeviceMemType = [Mutex<Option<XhciDevice>>; (MAX_SLOTS_EN + 1) as usize];
 
 const unsafe fn device_mem_init() -> DeviceMemType {
     let mut arr = core::mem::MaybeUninit::<DeviceMemType>::uninit().assume_init();
     let mut outer = 0;
-    while outer < (max_slots_en + 1) as usize {
+    while outer < (MAX_SLOTS_EN + 1) as usize {
         arr[outer] = Mutex::new(None);
         outer += 1;
     }
@@ -521,6 +529,13 @@ impl TRB {
         TRB {
             data: [
                 (ptr & 0xfffffff0) as u32, (ptr >> 32) as u32, 0, ((slot_id as u32) << 24) | 11 << 10
+            ]
+        }
+    }
+    pub fn no_op_command_trb() -> TRB {
+        TRB {
+            data: [
+                0, 0, 0, 23 << 10
             ]
         }
     }
@@ -746,7 +761,7 @@ impl TransferEventTRB {
                         let dci = (buf[2] & 0b111) * 2 + (buf[2] >> 7);
                         debug!("buf[2] & 0b111: {}, buf[2] >> 7: {}", buf[2] & 0b111, buf[2] >> 7);
                         dev.input_ctx.input_control_ctx()[1] |= 1 << (dci as u32);
-                        let ptr = dev.transfer_rings[dci as usize - 1].x.as_ptr() as u64;
+                        let ptr = dev.transfer_rings[dci as usize - 1].x.0.as_ptr() as u64;
                         let ep_type = match (buf[2] >> 7, buf[3] & 0b11) {
                             (0, 1) => 1u32,
                             (0, 2) => 2,
@@ -811,8 +826,11 @@ const TRB_BUF_LEN: usize = 32;
 
 type TRBbufTy = [TRB; TRB_BUF_LEN];
 
+#[repr(align(64))]
+struct TRBTable([TRB; TRB_BUF_LEN]);
+
 struct MemPoolCrTRB {
-    x: &'static mut TRBbufTy, // [TRB; TRB_BUF_LEN],
+    x: &'static mut TRBTable, // [TRB; TRB_BUF_LEN],
     index: usize,
     cycle: bool
 }
@@ -821,14 +839,14 @@ impl MemPoolCrTRB {
     pub fn push(&mut self, mut trb: TRB) {
         trb.data[3] = (trb.data[3] & !0x1) | (self.cycle as u32);
         for i in 0..4 {
-            self.x[self.index].data[i] = trb.data[i]
+            self.x.0[self.index].data[i] = trb.data[i]
         }
         self.index += 1;
         if self.index == TRB_BUF_LEN - 1 {
-            let mut link = TRB::new_link_trb(self.x.as_ptr() as u64);
+            let mut link = TRB::new_link_trb(self.x.0.as_ptr() as u64);
             link.data[3] = link.data[3] | (self.cycle as u32);
             for i in 0..4 {
-                self.x[self.index].data[i] = link.data[i];
+                self.x.0[self.index].data[i] = link.data[i];
             }
             self.index = 0;
             self.cycle = !self.cycle;
@@ -846,6 +864,7 @@ struct EventRingSegmentTableEntry {
     rsvdz2: u32,
 }
 
+#[repr(align(64))]
 struct MemPoolERSTE {
     x: [EventRingSegmentTableEntry; 1]
 }
@@ -853,14 +872,14 @@ struct MemPoolERSTE {
 // static ERSTE_BUF: Mutex<MemPoolERSTE> = Mutex::new(MemPoolERSTE { x: [EventRingSegmentTableEntry { addr: 0, size: 0, rsvdz1: 0, rsvdz2: 0 }; 1] });
 
 struct MemPoolErTRB {
-    x: &'static TRBbufTy, // [TRB; TRB_BUF_LEN],
+    x: &'static TRBTable, // [TRB; TRB_BUF_LEN],
     index: usize,
     cycle: bool,
 }
 
 impl MemPoolErTRB {
     fn next_(&mut self) -> Option<TRB> {
-        let v = self.x[self.index];
+        let v = self.x.0[self.index];
         if v.cycle() == self.cycle {
             if self.index == TRB_BUF_LEN - 1 {
                 self.index = 0;
@@ -877,7 +896,7 @@ impl MemPoolErTRB {
         unsafe {
             let interrupt_reg = xhc.capability.runtime().interrupt_set();
             let p = interrupt_reg[0].event_ring_dequeue_pointer.read() & 0xf;
-            interrupt_reg[0].event_ring_dequeue_pointer.write(p | (&self.x[self.index] as *const TRB as u64));
+            interrupt_reg[0].event_ring_dequeue_pointer.write(p | (&self.x.0[self.index] as *const TRB as u64));
         }
     }
 }
@@ -912,26 +931,26 @@ static ER_WAKER: AtomicWaker = AtomicWaker::new();
 
 #[repr(C, align(64))]
 struct MemPoolTrTRB {
-    x: &'static mut TRBbufTy, // [TRB; TRB_BUF_LEN],
+    x: &'static mut TRBTable, // [TRB; TRB_BUF_LEN],
     index: usize,
     cycle: bool,
 }
 
 impl MemPoolTrTRB {
     pub fn center(&self) -> &TRB {
-        &self.x[self.index]
+        &self.x.0[self.index]
     }
     pub fn push(&mut self, mut trb: TRB) {
         trb.data[3] = (trb.data[3] & !0x1) | (self.cycle as u32);
         for i in 0..4 {
-            self.x[self.index].data[i] = trb.data[i]
+            self.x.0[self.index].data[i] = trb.data[i]
         }
         self.index += 1;
         if self.index == TRB_BUF_LEN - 1 {
-            let mut link = TRB::new_link_trb(self.x.as_ptr() as u64);
+            let mut link = TRB::new_link_trb(self.x.0.as_ptr() as u64);
             link.data[3] = (link.data[3] & !0x1) | (self.cycle as u32);
             for i in 0..4 {
-                self.x[self.index].data[i] = link.data[i];
+                self.x.0[self.index].data[i] = link.data[i];
             }
             self.index = 0;
             self.cycle = !self.cycle;
@@ -990,11 +1009,11 @@ pub struct XhcController {
     addressing_port: u8,
     keyboard_handler: fn(modifire: u8, pressing: [u8; 6]),
     mouse_handler: fn(modifire: u8, move_x: i8, move_y: i8),
-    dcbaa: &'static mut DcbaaTy,
+    dcbaa: &'static mut DCBAA,
     command_ring: MemPoolCrTRB,
     event_ring: MemPoolErTRB,
     erste: &'static mut MemPoolERSTE,
-    allocator: LinkedListAllocator,
+    allocator: SimplestAllocator,
     center: usize,
 }
 
@@ -1003,8 +1022,8 @@ impl XhcController {
         let mem = Vec::<u8>::with_capacity(1024 * 1024 * 4).leak();
         let head = mem as *mut [u8] as *mut u8 as usize;
         let end = head + 1024 * 1024 * 4;
-        let allocator = LinkedListAllocator::empty();
-        allocator.init(head, end);
+        let allocator = SimplestAllocator::empty();
+        allocator.init(head as *mut u8, end as *mut u8);
 
 
 
@@ -1064,28 +1083,45 @@ impl XhcController {
         let max_slots = cap_reg.max_slots();
 
         debug!("max slots: {}", max_slots);
-        assert!(max_slots >= max_slots_en);
+        assert!(max_slots >= MAX_SLOTS_EN);
 
         let config_reg = cap_reg.configure();
-        config_reg.set_max_slots_en(max_slots_en);
+        config_reg.set_max_slots_en(MAX_SLOTS_EN);
+
+        let pagesize = cap_reg.pagesize() as usize;
+
+        let hcs_params2 = cap_reg.hcs_params2.read();
+        let max_scratchpad_buffers = (((hcs_params2 >> 16) & (0x1f << 5)) | (hcs_params2 >> 27)) as usize;
+
+        debug!("max_scratchpad_buffers: {}, pagesize: {}", max_scratchpad_buffers, pagesize);
 
         let dcbaap = cap_reg.dcbaap();
-        let ptr = allocator.alloc_with_boundary_zeroed(size_of::<DcbaaTy>(), 64, 4096);
-        let dcbaap_ptr = &mut *(ptr as *mut DcbaaTy); // DCBAA.lock().x.as_ptr() as u64;
+        let ptr = allocator.alloc_with_boundary_zeroed(Layout::new::<DCBAA>(), pagesize);
+        let dcbaap_ptr = &mut *(ptr as *mut DCBAA); // DCBAA.lock().x.as_ptr() as u64;
         dcbaap.set_dcbaap(ptr as u64);
 
+        if max_scratchpad_buffers > 0 {
+            let arr = allocator.alloc_with_boundary_zeroed(Layout::from_size_align(max_scratchpad_buffers * 8, 64).unwrap(), pagesize) as *mut u64;
+            for i in 0..max_scratchpad_buffers {
+                arr.add(i).write(
+                    allocator.alloc_with_boundary_zeroed(Layout::from_size_align(pagesize, pagesize).unwrap(), 0) as usize as u64
+                );
+            }
+            dcbaap_ptr.0[0] = arr as usize as u64;
+        }
+
         let crcr = cap_reg.crcr();
-        let ptr = allocator.alloc_with_boundary_zeroed(size_of::<TRBbufTy>(), 64, 65536); // CR_BUF.lock().x.as_ptr() as u64;
-        let cr_ptr = &mut *(ptr as *mut TRBbufTy);
+        let ptr = allocator.alloc_with_boundary_zeroed(Layout::new::<TRBTable>(), 65536); // CR_BUF.lock().x.as_ptr() as u64;
+        let cr_ptr = &mut *(ptr as *mut TRBTable);
         assert!(ptr as u64 & 0x3f == 0);
         crcr.set_value(ptr as u64 | 1);
         // crcr.set_pointer(ptr);
         // crcr.set_ring_cycle_state(true);
 
-        let ptr = allocator.alloc_with_boundary_zeroed(size_of::<TRBbufTy>(), 64, 65536); // ER_BUF.lock().x.as_ptr() as u64;
-        let er_ptr = &mut *(ptr as *mut TRBbufTy);
+        let ptr = allocator.alloc_with_boundary_zeroed(Layout::new::<TRBTable>(), 65536); // ER_BUF.lock().x.as_ptr() as u64;
+        let er_ptr = &mut *(ptr as *mut TRBTable);
         assert!(ptr as u64 & 0x3f == 0);
-        let erste_ptr = allocator.alloc_with_boundary_zeroed(size_of::<MemPoolERSTE>(), 64, 0);
+        let erste_ptr = allocator.alloc_with_boundary_zeroed(Layout::new::<MemPoolERSTE>(), 0);
         let mut erste_lock = &mut *(erste_ptr as *mut MemPoolERSTE); // ERSTE_BUF.lock();
         erste_lock.x[0].addr = ptr as u64;
         erste_lock.x[0].size = TRB_BUF_LEN as u16;
@@ -1101,7 +1137,8 @@ impl XhcController {
         interrupt_regs[0].management.write(0x3);
         usbcmd.set_interrupt_enable(true);
         let mut port_config_phase = [ConfigPhase::NotConnected; 256];
-        port_config_phase[15] = ConfigPhase::Broken;
+        // port_config_phase[16] = ConfigPhase::Broken;
+
         XhcController {
             capability: cap_reg,
             port_config_phase,
@@ -1135,6 +1172,10 @@ impl XhcController {
 
     // safety: port must be connected
     pub fn reset_port(&mut self, port_num: u8) {
+        // if port_num != 3 && port_num != 4 {
+        //     debug!("pass {}", port_num);
+        //     return;
+        // }
         if self.addressing_port != 0 {
             self.port_config_phase[port_num as usize] = ConfigPhase::WaitingAddressed;
             return;
@@ -1157,8 +1198,10 @@ impl XhcController {
         if port.is_enabled() && port.is_port_reset_changed() {
             port.clear_is_port_reset_changed();
             self.port_config_phase[port_num as usize] = ConfigPhase::EnablingSlot;
+            self.command_ring.push(TRB::no_op_command_trb());
             self.command_ring.push(TRB::new_enable_slot_trb());
             self.capability.doorbell()[0].ring(0, 0);
+            debug!("enable port: {}", port_num);
         } else {
             error!("{}, {}", port.is_enabled(), port.is_port_reset_changed());
             error!("{}", make_error!(Code::InvalidPhase));
@@ -1167,16 +1210,17 @@ impl XhcController {
 
     pub fn address_deivce(&mut self, slot_id: u8, port_num: u8) {
         let mut lock = DEVICES_MEM[slot_id as usize].lock();
+        let pagesize = self.capability.pagesize() as usize;
         let (device_ctx, input_ctx) = unsafe {
             if self.capability.hcc_params1.read() & 0b100 != 0 {
                 (
-                    DeviceContextEnum::V2(&*(self.allocator.alloc_with_boundary_zeroed(size_of::<DeviceContext64>(), 64, 4096) as *const DeviceContext64)),
-                    InputContextEnum::V2(&mut *(self.allocator.alloc_with_boundary_zeroed(size_of::<InputContext64>(), 64, 4096) as *mut InputContext64))
+                    DeviceContextEnum::V2(&*(self.allocator.alloc_with_boundary_zeroed(Layout::new::<DeviceContext64>(), pagesize) as *const DeviceContext64)),
+                    InputContextEnum::V2(&mut *(self.allocator.alloc_with_boundary_zeroed(Layout::new::<InputContext64>(), pagesize) as *mut InputContext64))
                 )
             } else {
                 (
-                    DeviceContextEnum::V1(&*(self.allocator.alloc_with_boundary_zeroed(size_of::<DeviceContext>(), 64, 4096) as *const DeviceContext)),
-                    InputContextEnum::V1(&mut *(self.allocator.alloc_with_boundary_zeroed(size_of::<InputContext>(), 64, 4096) as *mut InputContext))
+                    DeviceContextEnum::V1(&*(self.allocator.alloc_with_boundary_zeroed(Layout::new::<DeviceContext>(), pagesize) as *const DeviceContext)),
+                    InputContextEnum::V1(&mut *(self.allocator.alloc_with_boundary_zeroed(Layout::new::<InputContext>(), pagesize) as *mut InputContext))
                 )
             }
         };
@@ -1195,7 +1239,7 @@ impl XhcController {
                 let mut arr: [MaybeUninit<MemPoolTrTRB>; 31] = MaybeUninit::uninit().assume_init();
                 for elem in arr.iter_mut() {
                     elem.write(MemPoolTrTRB {
-                        x: &mut *(self.allocator.alloc_with_boundary_zeroed(size_of::<TRBbufTy>(), 64, 65536) as *mut TRBbufTy),
+                        x: &mut *(self.allocator.alloc_with_boundary_zeroed(Layout::new::<TRBTable>(), 65536) as *mut TRBTable),
                         index: 0,
                         cycle: true
                     });
@@ -1206,7 +1250,7 @@ impl XhcController {
         let dev = lock.as_mut().unwrap();
         // dev.slot_id = slot_id;
         // dev.doorbell = &mut self.capability.doorbell()[slot_id as usize] as *mut DoorbellRegister as u64;
-        self.dcbaa[slot_id as usize] = dev.device_ctx.as_inner_ptr();
+        self.dcbaa.0[slot_id as usize] = dev.device_ctx.as_inner_ptr();
         for d in dev.input_ctx.input_control_ctx().iter_mut() {
             *d = 0;
         }
@@ -1225,7 +1269,7 @@ impl XhcController {
             }
         };
 
-        let ptr = dev.transfer_rings[0].x.as_ptr() as *const TRB as u64;
+        let ptr = dev.transfer_rings[0].x.0.as_ptr() as *const TRB as u64;
         assert!(ptr & 0x3f == 0);
         dev.input_ctx.ep_ctx(0)[1] = max_packet << 16 | 4 << 3 | 3 << 1;
         dev.input_ctx.ep_ctx(0)[2] = (ptr & 0xffffffc0) as u32 | 1;
@@ -1237,33 +1281,58 @@ impl XhcController {
         self.capability.doorbell()[0].ring(0, 0);
     }
 
-    pub fn process_event(&mut self) {
+    pub fn process_event(&mut self) -> bool {
         // let mut er_lock = ER_BUF.lock();
-        while let Some(trb) = self.event_ring.next_() {
+        if let Some(trb) = self.event_ring.next_() {
             let v1 = trb.data[0];
             let v2 = trb.data[1];
             let v3 = trb.data[2];
             let v4 = trb.data[3];
-            // debug!("{:x} {:x} {:x} {:x}", v1, v2, v3, v4);
+            debug!("trb: {:x} {:x} {:x} {:x}", v1, v2, v3, v4);
             if let Some(casted) = trb.cast::<PortStatusChangeEventTRB>() {
+                // debug!("portstatuschangeevent");
                 casted.on_event(self)
             } else if let Some(casted) = trb.cast::<CommandCompletionEventTRB>() {
+                // debug!("commandcompletionevent");
                 if v3 >> 24 != 1 {
                     error!("command completion error: {}", v3 >> 24);
                 }
                 casted.on_event(self)
             } else if let Some(casted) = trb.cast::<TransferEventTRB>() {
+                // debug!("transferevent");
                 casted.on_event(self)
             } else {
-                error!("{}", make_error!(Code::NotImplemented))
+                error!("TRB type: {} {}", trb.ty(), make_error!(Code::NotImplemented))
             }
             self.event_ring.clean(self);
 
-            // if self.capability.usb_status().hchalted() {
-            //     panic!("halted")
-            // }
+
         }
-        debug!("usbsts: {}", self.capability.usb_status().data.read());
+            if self.capability.usb_status().hchalted() {
+                error!("usb halted");
+                for trb in self.event_ring.x.0 {
+                    let v1 = trb.data[0];
+                    let v2 = trb.data[1];
+                    let v3 = trb.data[2];
+                    let v4 = trb.data[3];
+                    debug!("{:x} {:x} {:x} {:x}", v1, v2, v3, v4);
+                }
+                // let max_ports = self.capability.max_ports();
+                // for i in 1..max_ports {
+                //     debug!("port {} {}", i, self.capability.port_sc(i).data.read());
+                // }
+                debug!("{} {}", self.capability.usb_command().data.read(), self.capability.usb_status().data.read());
+                // for trb in self.command_ring.x.0 {
+                //     let v1 = trb.data[0];
+                //     let v2 = trb.data[1];
+                //     let v3 = trb.data[2];
+                //     let v4 = trb.data[3];
+                //     debug!("{:x} {:x} {:x} {:x}", v1, v2, v3, v4);
+                // }
+                debug!("{} {}", self.command_ring.index, self.command_ring.cycle);
+                return false;
+            }
+        true
     }
 }
 

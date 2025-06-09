@@ -1,6 +1,6 @@
-use core::{alloc::GlobalAlloc, ptr::null_mut};
+use core::{alloc::{GlobalAlloc, Layout}, ptr::null_mut, sync::atomic::Ordering};
 
-use crate::{allocator::{LinkedListAllocator, LIST_SIZE, List}, debug};
+use crate::{allocator::{LinkedListAllocator, List, SimplestAllocator, LIST_SIZE}, debug};
 
 impl LinkedListAllocator {
     pub fn alloc_with_boundary_zeroed(&self, size: usize, align: usize, boundary: usize) -> *mut u8 {
@@ -100,6 +100,58 @@ impl LinkedListAllocator {
             if list.is_null() {
                 return null_mut();
             }
+        }
+    }
+}
+
+impl SimplestAllocator {
+    pub fn alloc_with_boundary_zeroed(&self, layout: Layout, boundary: usize) -> *mut u8 {
+        unsafe {
+            let ptr = self.alloc_with_boundary(layout, boundary);
+            ptr.write_bytes(0, layout.size());
+            ptr
+        }
+    }
+    pub unsafe fn alloc_with_boundary(&self, layout: Layout, boundary: usize) -> *mut u8 {
+        assert!(boundary == 0 || (boundary.is_power_of_two() && layout.size() <= boundary && layout.align() <= boundary));
+        let ptr = self.alloc_with_boundary_unchecked(layout, boundary);
+        let us = ptr.addr();
+        assert!(boundary == 0 || us / boundary == (us + layout.size()) / boundary);
+        assert!(us % layout.align() == 0);
+        ptr
+    }
+    // safety: align must be 2 ^ n and boundary must be 0 or 2 ^ n and size <= boundary and align <= boundary
+    pub unsafe fn alloc_with_boundary_unchecked(&self, layout: Layout, boundary: usize) -> *mut u8 {
+        if boundary == 0 {
+            return self.alloc(layout);
+        }
+        // debug!("usballocate {}, {}, {}", align, size, boundary);
+
+        let size = layout.size();
+        let align = layout.align();
+        let mask = align - 1;
+
+        let b_mask = boundary - 1;
+
+        let mut p;
+        while {
+            let h = self.head.load(Ordering::Relaxed);
+            p = if h.addr() & mask != 0 {
+                h.map_addr(|u| (u & !mask) + align)
+            } else {
+                h
+            };
+            p = if p.addr() & boundary != (p.addr() + size) & boundary {
+                p.map_addr(|u| (u & !b_mask) + boundary)
+            } else {
+                p
+            };
+            self.head.compare_exchange_weak(h, p.map_addr(|u| u + size), Ordering::Relaxed, Ordering::Relaxed).is_err()
+        } {};
+        if p.addr() + size < self.end.load(Ordering::Relaxed).addr() {
+            p
+        } else {
+            null_mut()
         }
     }
 }

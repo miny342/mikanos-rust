@@ -1,5 +1,7 @@
-use core::ptr::null_mut;
+use core::mem::MaybeUninit;
+use core::ptr::{dangling_mut, null, null_mut, without_provenance_mut, NonNull};
 use core::alloc::{GlobalAlloc, Layout};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use spin::Mutex;
 
@@ -147,45 +149,47 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
     }
 }
 
-struct SimplestAllocatorData {
-    head: usize,
-    end: usize,
+pub struct SimplestAllocator {
+    pub head: AtomicPtr<u8>,
+    pub end: AtomicPtr<u8>,
 }
-
-pub struct SimplestAllocator(Mutex<SimplestAllocatorData>);
 
 impl SimplestAllocator {
     pub const fn empty() -> Self {
-        SimplestAllocator(Mutex::new(SimplestAllocatorData { head: 0, end: 0 }))
+        SimplestAllocator {
+            head: AtomicPtr::new(null_mut()),
+            end: AtomicPtr::new(null_mut())
+        }
     }
-    pub unsafe fn init(&self, head: usize, end: usize) {
-        let mut l = self.0.lock();
-        l.head = head;
-        l.end = end;
+    pub unsafe fn init(&self, head: *mut u8, end: *mut u8) {
+        self.head.store(head, Ordering::Relaxed);
+        self.end.store(end, Ordering::Relaxed);
     }
 }
 
 unsafe impl GlobalAlloc for SimplestAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let mut l = self.0.lock();
         let size = layout.size();
         let align = layout.align();
+        let mask = align - 1;
 
-        let head = if l.head % align == 0 {
-            l.head
+        let mut p;
+        while {
+            let h = self.head.load(Ordering::Relaxed);
+            p = if h.addr() & mask != 0 {
+                h.map_addr(|u| (u & !mask) + align)
+            } else {
+                h
+            };
+            self.head.compare_exchange_weak(h, p.map_addr(|u| u + size), Ordering::Relaxed, Ordering::Relaxed).is_err()
+        } {};
+        if p.addr() + size < self.end.load(Ordering::Relaxed).addr() {
+            p
         } else {
-            let aligned_head = (l.head - l.head % align) + align;
-            aligned_head
-        };
-
-        l.head = head + size;
-        if l.head > l.end {
             null_mut()
-        } else {
-            head as *mut u8
         }
     }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
 
     }
 }
