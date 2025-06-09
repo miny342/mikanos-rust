@@ -23,6 +23,7 @@ mod task;
 mod window;
 mod timer;
 mod serial;
+mod entry;
 
 use core::alloc::Layout;
 use core::arch::{asm, global_asm};
@@ -48,13 +49,11 @@ use crate::window::WindowManager;
 
 extern crate alloc;
 
-global_asm!(include_str!("asm.s"));
+// #[global_allocator]
+// static ALLOCATOR: allocator::LinkedListAllocator = allocator::LinkedListAllocator::empty();
 
 #[global_allocator]
-static ALLOCATOR: allocator::LinkedListAllocator = allocator::LinkedListAllocator::empty();
-
-// #[global_allocator]
-// static ALLOCATOR: allocator::SimplestAllocator = allocator::SimplestAllocator::empty();
+static ALLOCATOR: allocator::SimplestAllocator = allocator::SimplestAllocator::empty();
 
 #[alloc_error_handler]
 fn on_oom(_layout: Layout) -> ! {
@@ -87,7 +86,6 @@ fn keyboard_handler(modifire: u8, pressing: [u8; 6]) {
 
 static LOGGER: logger::Logger = Logger;
 
-#[no_mangle]
 extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
     let framebufferconfig = unsafe { *config };
 
@@ -95,19 +93,9 @@ extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Debug)).unwrap();
     unsafe {
         segment::setup_segments();
-    }
-    unsafe {
         segment::set_ds_all(0);
-    }
-    unsafe {
         segment::set_csss(1 << 3, 2 << 3);
-    }
-    unsafe{
         paging::setup_identity_page_table();
-    }
-
-    unsafe {
-        (framebufferconfig).frame_buffer.write_bytes(123, (framebufferconfig).horizontal_resolution * (framebufferconfig).vertical_resolution * 4);
     }
 
     let memmap = unsafe { &*memmap_ptr };
@@ -141,7 +129,7 @@ extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     let start = heap_start.0 * BYTES_PER_FRAME;
     let end = start + heap_frame * BYTES_PER_FRAME;
     unsafe {
-        ALLOCATOR.init(start, end);
+        ALLOCATOR.init(start as *mut u8, end as *mut u8);
     }
     // initialized memory allocator
 
@@ -242,17 +230,15 @@ extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     let xhc_mmio_base = xhc_bar & !0xf;
     debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
 
-    for _ in 0..5 {
+    for _ in 0..1 {
         let mut xhc = unsafe {
             Box::new(usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse::mouse_handler))
         };
         xhc.run();
         xhc.configure_port();
-        unsafe { asm!("sti") };
-        while !xhc.capability.usb_status().hchalted() {
-            xhc.process_event();
-        }
-        unsafe { asm!("cli") };
+        // unsafe { asm!("sti") };
+        while xhc.process_event() {}
+        // unsafe { asm!("cli") };
         debug!("xhc error! restarting...");
     }
 

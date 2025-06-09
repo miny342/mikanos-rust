@@ -7,6 +7,7 @@ use uefi::boot::PAGE_SIZE;
 use uefi::mem::memory_map::MemoryMap;
 use uefi::mem::memory_map::MemoryMapOwned;
 use uefi::prelude::*;
+use uefi::print;
 use uefi::proto::console::gop::GraphicsOutput;
 use uefi::proto::media::file::Directory;
 use uefi::proto::media::file::File;
@@ -19,9 +20,13 @@ use uefi::boot;
 
 use elf_rs::Elf;
 use elf_rs::ProgramType;
+use uefi::system::with_config_table;
+use uefi::table::cfg::ACPI2_GUID;
+use uefi::Char8;
 
 use core::arch::asm;
 use core::ops::Deref;
+use core::ptr::null_mut;
 use common::writer_config::*;
 
 #[macro_use]

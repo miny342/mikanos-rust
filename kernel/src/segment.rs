@@ -101,15 +101,17 @@ fn set_data_segment(b: &mut SegmentDescriptor, ty: DescriptorType, descriptor_pr
 }
 
 unsafe fn load_gdt(offset: *mut SegmentDescriptor, limit: u16) {
-    asm!(
-        "sub rsp, 10",
-        "mov [rsp], {limit:x}",
-        "mov [rsp + 2], {offset}",
-        "lgdt [rsp]",
-        "add rsp, 10",
-        limit = in(reg) limit,
-        offset = in(reg) offset as u64,
-    )
+    unsafe {
+        asm!(
+            "sub rsp, 10",
+            "mov [rsp], {limit:x}",
+            "mov [rsp + 2], {offset}",
+            "lgdt [rsp]",
+            "add rsp, 10",
+            limit = in(reg) limit,
+            offset = in(reg) offset as u64,
+        )
+    }
 }
 
 pub unsafe fn setup_segments() {

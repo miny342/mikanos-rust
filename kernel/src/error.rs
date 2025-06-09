@@ -9,6 +9,7 @@ macro_rules! make_error {
     };
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum Code {
     Full,
@@ -30,7 +31,6 @@ pub enum Code {
     InvalidPhase,
     UnknownXHCISpeedID,
     NoWaiter,
-    LastOfCode
 }
 
 #[derive(Debug)]
@@ -42,10 +42,6 @@ pub struct Error {
 
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        match self.code {
-            // なぜかわからないが、元のコードでLastOfCodeはindex out of rangeなので一応
-            Code::LastOfCode => panic!("print Last of code!"),
-            _ => write!(f, "{:?} at {} {}", self.code, self.file, self.line),
-        }
+        write!(f, "{:?} at {} {}", self.code, self.file, self.line)
     }
 }

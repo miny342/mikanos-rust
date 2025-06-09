@@ -113,3 +113,15 @@ pub fn notify_end_of_interrupt() {
         *(0xfee000b0 as *mut u32) = 0;
     }
 }
+
+pub unsafe fn enable_interrupt() {
+    unsafe {
+        asm!("sti");
+    }
+}
+
+pub unsafe fn disable_interrupt() {
+    unsafe {
+        asm!("cli");
+    }
+}

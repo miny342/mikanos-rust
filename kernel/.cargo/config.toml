@@ -1,17 +1,12 @@
 [build]
 target = "x86_64-unknown-none"
 
-[profile.release]
-panic = "abort"
-
-[profile.dev]
-panic = "abort"
-
 [target.x86_64-unknown-none]
 linker = "ld.lld"
 rustflags = [
     "-C", "no-redzone=yes",
     "-C", "relocation-model=pic",
+    "-C", "panic=abort",
 
     "-C", "link-arg=--entry=kernel_main",
 ]
