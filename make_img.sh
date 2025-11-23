@@ -2,27 +2,29 @@
 
 if [ "$#" -gt 0 ]
 then
-    ./bootloader/build.sh $1
-    ./kernel/build.sh $1
+    cd bootloader
+    cargo build --release
+    cd ../kernel
+    cargo build --release
 else
-    ./bootloader/build.sh
-    ./kernel/build.sh
+    cd bootloader
+    cargo build
+    cd ../kernel
+    cargo build
 fi
+cd ..
 
 qemu-img create -f raw disk.img 200M
-mkfs.fat -n 'MIKAN OS Rust' -s 2 -f 2 -R 32 -F 32 disk.img
-mkdir -p mnt
-sudo mount -o loop disk.img mnt
-sudo mkdir -p mnt/EFI/BOOT
+mkfs.fat -n 'MIKAN OS' -s 2 -f 2 -R 32 -F 32 disk.img
+mkdir -p mnt/EFI/BOOT
+mmd -i disk.img ::/EFI
+mmd -i disk.img ::/EFI/BOOT
 
 if [ "$#" -gt 0 ]
 then
-    sudo cp kernel/target/x86_64-unknown-none/release/kernel mnt/kernel
-    sudo cp bootloader/target/x86_64-unknown-uefi/release/mikanos-rust.efi mnt/EFI/BOOT/BOOTX64.EFI
+    mcopy -i disk.img kernel/target/x86_64-unknown-none/release/kernel ::/kernel
+    mcopy -i disk.img bootloader/target/x86_64-unknown-uefi/release/mikanos-rust.efi ::/EFI/BOOT/BOOTX64.EFI
 else
-    sudo cp kernel/target/x86_64-unknown-none/debug/kernel mnt/kernel
-    sudo cp bootloader/target/x86_64-unknown-uefi/debug/mikanos-rust.efi mnt/EFI/BOOT/BOOTX64.EFI
+    mcopy -i disk.img kernel/target/x86_64-unknown-none/debug/kernel ::/kernel
+    mcopy -i disk.img bootloader/target/x86_64-unknown-uefi/debug/mikanos-rust.efi ::/EFI/BOOT/BOOTX64.EFI
 fi
-
-sudo umount mnt
-
