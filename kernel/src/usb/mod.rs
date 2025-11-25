@@ -23,207 +23,12 @@ use crate::error::*;
 // use self::usb_allocator::SimpleAllocator;
 
 mod usb_allocator;
+mod registers;
 
 // static ALLOCATOR: LinkedListAllocator = LinkedListAllocator::empty();
 
 type HandleError<T> = Result<T, Error>;
 
-#[repr(C)]
-pub struct UsbStatusRegister {
-    data: RW<u32>
-}
-
-impl UsbStatusRegister {
-    pub fn hchalted(&self) -> bool {
-        self.data.read() & 0x1 != 0
-    }
-    pub fn controller_not_ready(&self) -> bool {
-        (self.data.read() >> 11) & 0x1 != 0
-    }
-}
-
-#[repr(C)]
-struct UsbCommandRegister {
-    data: RW<u32>
-}
-
-impl UsbCommandRegister {
-    pub fn run(&mut self) {
-        unsafe { self.data.write(self.data.read() | 0x1) }
-    }
-    pub fn stop(&mut self) {
-        unsafe { self.data.write(self.data.read() & !0x1) }
-    }
-    pub fn host_controller_reset(&self) -> bool {
-        (self.data.read() >> 1) & 0x1 != 0
-    }
-    pub fn set_host_controller_reset(&mut self, value: bool) {
-        unsafe { self.data.write((self.data.read() & !0x2) | ((value as u32) << 1)) }
-    }
-    pub fn set_interrupt_enable(&mut self, value: bool) {
-        unsafe { self.data.write((self.data.read() & !0x4) | ((value as u32) << 2)) }
-    }
-}
-
-#[repr(C)]
-struct ConfigureRegister {
-    data: RW<u32>
-}
-
-impl ConfigureRegister {
-    pub fn set_max_slots_en(&mut self, value: u8) {
-        unsafe { self.data.write((self.data.read() & !0xff) | (value as u32)) }
-    }
-}
-
-#[repr(C)]
-struct DeviceContextBaseAddressArrayPointerRegister {
-    data: RW<u64>
-}
-
-impl DeviceContextBaseAddressArrayPointerRegister {
-    pub fn set_dcbaap(&mut self, value: u64) {
-        assert!(value & 0x3f == 0);
-        unsafe { self.data.write(value) }
-    }
-}
-
-#[repr(C)]
-struct CommandRingControlRegister {
-    data: RW<u64>
-}
-
-impl CommandRingControlRegister {
-    // pub fn set_ring_cycle_state(&mut self, value: bool) {
-    //     unsafe { self.data.write((self.data.read() & !0x1) | (value as u64)) }
-    // }
-    // pub fn set_pointer(&mut self, value: u64) {
-    //     assert!(value & 0x3f == 0);
-    //     unsafe { self.data.write((self.data.read() & 0x3f) | value) }
-    // }
-    pub unsafe fn set_value(&mut self, value: u64) {
-        self.data.write(value);
-    }
-}
-
-#[repr(C)]
-struct HostControllerRuntimeRegister {
-    data: RW<u32>
-}
-
-impl HostControllerRuntimeRegister {
-    pub fn interrupt_set(&self) -> &mut [InterruptRegister] {
-        unsafe { from_raw_parts_mut(((self as *const HostControllerRuntimeRegister as u64) + 0x20) as *mut InterruptRegister, 1024) }
-    }
-}
-
-#[repr(C)]
-struct PortStatusAndControlRegister {
-    data: RW<u32>
-}
-
-impl PortStatusAndControlRegister {
-    pub fn is_connected(&self) -> bool {
-        self.data.read() & 0x1 != 0
-    }
-    pub fn is_enabled(&self) -> bool {
-        self.data.read() & 0x2 != 0
-    }
-    pub fn reset(&mut self) {
-        let val = self.data.read() & 0x0e00c3e0;
-        unsafe { self.data.write(val | 0x00220010) }
-        while self.is_port_reset() {}
-    }
-    pub fn is_port_reset(&self) -> bool {
-        self.data.read() & 0x10 !=0
-    }
-    pub fn is_port_reset_changed(&self) -> bool {
-        self.data.read() & 0x200000 != 0
-    }
-    pub fn clear_is_port_reset_changed(&mut self) {
-        let v = self.data.read() & 0x0e01c3e0;
-        unsafe {self.data.write(v | 0x200000) };
-    }
-    pub fn port_speed(&self) -> u8 {
-        ((self.data.read() >> 10) & 0xf) as u8
-    }
-}
-
-#[repr(C)]
-struct DoorbellRegister {
-    data: RW<u32>
-}
-
-impl DoorbellRegister {
-    pub fn ring(&mut self, target: u8, stream_id: u16) {
-        unsafe { self.data.write((target as u32) | ((stream_id as u32) << 16)) }
-    }
-}
-
-
-#[repr(C)]
-pub struct CapabilityRegisters {
-    // length: u8,
-    // rsvdz1: u8,
-    // hci_version: u16,
-    data: RW<u32>,
-    hcs_params1: RW<u32>,
-    hcs_params2: RW<u32>,
-    hcs_params3: RW<u32>,
-    hcc_params1: RW<u32>,
-    doorbell_offset: RW<u32>,
-    runtime_reg_offset: RW<u32>,
-    hcc_params2: RW<u32>,
-}
-
-impl CapabilityRegisters {
-    fn length(&self) -> u8 {
-        (self.data.read() & 0xff) as u8
-    }
-    fn hci_version(&self) -> u16 {
-        (self.data.read() >> 16) as u16
-    }
-    fn op_base(&self) -> u64 {
-        self as *const CapabilityRegisters as u64 + self.length() as u64
-    }
-    pub fn usb_status(&self) -> &mut UsbStatusRegister {
-        unsafe { &mut *((self.op_base() + 0x04) as *mut UsbStatusRegister) }
-    }
-    pub fn usb_command(&self) -> &mut UsbCommandRegister {
-        unsafe { &mut *(self.op_base() as *mut UsbCommandRegister) }
-    }
-    pub fn max_slots(&self) -> u8 {
-        (self.hcs_params1.read() & 0xff) as u8
-    }
-    pub fn max_ports(&self) -> u8 {
-        (self.hcs_params1.read() >> 24) as u8
-    }
-    pub fn max_interrupts(&self) -> u16 {
-        ((self.hcs_params1.read() >> 8) & 0x3ff) as u16
-    }
-    pub fn pagesize(&self) -> usize {
-        let bit = unsafe { *((self.op_base() + 0x8) as *const u32) };
-        1 << (bit.trailing_zeros() as usize + 12)
-    }
-    pub fn configure(&self) -> &mut ConfigureRegister {
-        unsafe { &mut *((self.op_base() + 0x38) as *mut ConfigureRegister) }
-    }
-    pub fn dcbaap(&self) -> &mut DeviceContextBaseAddressArrayPointerRegister {
-        unsafe { &mut *((self.op_base() + 0x30) as *mut DeviceContextBaseAddressArrayPointerRegister) }
-    }
-    pub fn crcr(&self) -> &mut CommandRingControlRegister {
-        unsafe { &mut *((self.op_base() + 0x18) as *mut CommandRingControlRegister) }
-    }
-    pub fn runtime(&self) -> &mut HostControllerRuntimeRegister {
-        unsafe { &mut *((self as *const CapabilityRegisters as u64 + self.runtime_reg_offset.read() as u64) as *mut HostControllerRuntimeRegister) }
-    }
-    pub fn port_sc(&self, port: u8) -> &mut PortStatusAndControlRegister {
-        unsafe { &mut *((self.op_base() + 0x400 + 0x10 * (port as u64 - 1)) as *mut PortStatusAndControlRegister) }
-    }
-    pub fn doorbell(&self) -> &mut [DoorbellRegister] {
-        unsafe { &mut *(slice_from_raw_parts_mut((self as *const CapabilityRegisters as u64 + self.doorbell_offset.read() as u64) as *mut DoorbellRegister, 256)) }
-    }
-}
 
 const MAX_SLOTS_EN: u8 = 8;
 
@@ -387,11 +192,11 @@ struct XhciDevice {
 }
 
 impl XhciDevice {
-    fn doorbell(&self) -> &'static mut DoorbellRegister {
+    fn doorbell(&self) -> &'static mut registers::DoorbellRegister {
         if self.doorbell == 0 {
             panic!("doorbell is not initialized")
         }
-        unsafe { &mut *(self.doorbell as *mut DoorbellRegister) }
+        unsafe { &mut *(self.doorbell as *mut registers::DoorbellRegister) }
     }
     fn start_init(&mut self) {
         self.get_descriptor(1, 0);
@@ -979,17 +784,6 @@ impl MemPoolTrTRB {
 
 // static TR_BUF: TrBufType = unsafe { init_tr_buf() };
 
-
-#[repr(C)]
-struct InterruptRegister {
-    management: RW<u32>,
-    moderation: RW<u32>,
-    event_ring_segment_table_size: RW<u32>,
-    rsvdz1: RW<u32>,
-    event_ring_segment_table_base_addr: RW<u64>,
-    event_ring_dequeue_pointer: RW<u64>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConfigPhase {
     Broken,
@@ -1004,7 +798,7 @@ enum ConfigPhase {
 }
 
 pub struct XhcController {
-    pub capability: &'static CapabilityRegisters,
+    pub capability: &'static registers::CapabilityRegisters,
     port_config_phase: [ConfigPhase; 256],
     addressing_port: u8,
     keyboard_handler: fn(modifire: u8, pressing: [u8; 6]),
@@ -1027,7 +821,7 @@ impl XhcController {
 
 
 
-        let cap_reg = &*(mmio_base as *const CapabilityRegisters);
+        let cap_reg = &*(mmio_base as *const registers::CapabilityRegisters);
         debug!("cap reg: {}", cap_reg.length());
 
         // if cap_reg.hcc_params1.read() & 0b100 != 0 {
@@ -1230,7 +1024,7 @@ impl XhcController {
             input_ctx,
             slot_id,
             buf: [0; 512],
-            doorbell: &mut self.capability.doorbell()[slot_id as usize] as *mut DoorbellRegister as u64,
+            doorbell: &mut self.capability.doorbell()[slot_id as usize] as *mut registers::DoorbellRegister as u64,
             num_configuration: 0,
             max_packet_size: 0,
             classes: [ClassDriver { class: 0, sub_class: 0, protocol: 0, interface: 0 }; 15],
