@@ -217,7 +217,7 @@ extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     info!("xHC has been found: {}.{}.{}", xhc_dev.bus, xhc_dev.device, xhc_dev.func);
 
     let cs = interrupt::get_cs();
-    interrupt::set_idt_entry(interrupt::InterruptVector::XHCI as usize, interrupt::InterruptDescriptorAttr::new(interrupt::DescriptorType::InterruptGate, 0, true, 0), usb::int_handler_xhci as *const fn() as u64, cs);
+    interrupt::set_idt_entry(interrupt::InterruptVector::XHCI as usize, interrupt::InterruptDescriptorAttr::new(interrupt::DescriptorType::InterruptGate, 0, true, 0), usb::controller::int_handler_xhci as *const fn() as u64, cs);
     interrupt::load_idt();
 
     unsafe {
@@ -232,7 +232,7 @@ extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
 
     for _ in 0..1 {
         let mut xhc = unsafe {
-            Box::new(usb::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse::mouse_handler))
+            Box::new(usb::controller::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse::mouse_handler))
         };
         xhc.run();
         xhc.configure_port();
