@@ -4,6 +4,9 @@
 #![feature(sync_unsafe_cell)]
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
+#![feature(custom_test_frameworks)]
+#![test_runner(crate::test_runner)]
+#![reexport_test_harness_main = "test_main"]
 
 mod graphics;
 mod font;
@@ -29,6 +32,7 @@ use core::alloc::Layout;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use alloc::boxed::Box;
+use log::trace;
 use log::{debug, info, error};
 
 use common::writer_config::FrameBufferConfig;
@@ -37,6 +41,7 @@ use uefi::mem::memory_map::MemoryMap;
 
 use crate::graphics::*;
 use crate::console::*;
+use crate::interrupt::disable_interrupt;
 use crate::logger::*;
 use crate::memory_manager::{
     FrameID,
@@ -62,15 +67,45 @@ fn on_oom(_layout: Layout) -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    unsafe {
-        asm!("cli");
-    }
+    unsafe { disable_interrupt() };
     error!("{}", info);
     loop {
         unsafe {
             asm!("hlt");
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum QemuExitCode {
+    Success = 0x10,
+    Failed = 0x11,
+}
+
+pub fn exit_qemu(exit_code: QemuExitCode) -> ! {
+    unsafe {
+        core::arch::asm!(
+            "out dx, al",
+            in("dx") 0xf4u16,
+            in("eax") exit_code as u32,
+        );
+    }
+    loop {}
+}
+
+#[cfg(test)]
+fn test_runner(tests: &[&dyn Fn()]) {
+    println!("Running {} tests", tests.len());
+    for test in tests {
+        test();
+    }
+    exit_qemu(QemuExitCode::Success);
+}
+
+#[test_case]
+fn test_works_test() {
+    serial_println!("if this printed, test works!");
 }
 
 fn keyboard_handler(_modifire: u8, _pressing: [u8; 6]) {
@@ -80,10 +115,11 @@ fn keyboard_handler(_modifire: u8, _pressing: [u8; 6]) {
 static LOGGER: logger::Logger = Logger;
 
 extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
+    unsafe { disable_interrupt() };
     let framebufferconfig = unsafe { *config };
 
     SERIAL_USABLE.store(unsafe { init_serial() }, core::sync::atomic::Ordering::Relaxed);
-    log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Debug)).unwrap();
+    log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
     unsafe {
         segment::setup_segments();
         segment::set_ds_all(0);
@@ -156,6 +192,9 @@ extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     initialize_apic_timer();
 
     println!("hello");
+
+    #[cfg(test)]
+    test_main();
 
     let res = pci::scan_all_bus();
     match res {

@@ -1,6 +1,8 @@
+use crate::interrupt::{disable_interrupt, enable_and_halt_interrupt, enable_interrupt};
+
 use super::{Task, TaskId};
 use alloc::{collections::BTreeMap, sync::Arc, task::Wake};
-use core::{task::{Waker, Context, Poll}, arch::asm};
+use core::task::{Waker, Context, Poll};
 use crossbeam::queue::ArrayQueue;
 
 pub struct Executor {
@@ -45,14 +47,11 @@ impl Executor {
         loop {
             self.run_ready_tasks();
             unsafe {
-                asm!("cli");
+                disable_interrupt();
                 if self.task_queue.is_empty() {
-                    asm!(
-                        "sti",
-                        "hlt"
-                    )
+                    enable_and_halt_interrupt();
                 } else {
-                    asm!("sti")
+                    enable_interrupt();
                 }
             }
         }

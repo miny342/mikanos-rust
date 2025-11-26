@@ -10,6 +10,7 @@ rustflags = [
 
     "-C", "link-arg=--entry=kernel_main",
 ]
+runner = "./make_and_run_qemu.sh"
 
 [unstable]
 build-std = ["core", "compiler_builtins", "alloc"]

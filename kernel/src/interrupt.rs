@@ -125,3 +125,9 @@ pub unsafe fn disable_interrupt() {
         asm!("cli");
     }
 }
+
+pub unsafe fn enable_and_halt_interrupt() {
+    unsafe {
+        asm!("sti", "hlt");
+    }
+}
