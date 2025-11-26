@@ -15,7 +15,7 @@ GDK_BACKEND=x11 qemu-system-x86_64 \
     -drive if=pflash,format=raw,readonly=on,file=./lib/OVMF_VARS.fd \
     -drive file=disk.img,format=raw,if=none,id=stick \
     -serial stdio \
-    -device qemu-xhci \
+    -device nec-usb-xhci \
     -device usb-kbd \
     -device usb-mouse \
     -device usb-storage,drive=stick

@@ -2,6 +2,7 @@ use core::alloc::Layout;
 use core::mem::MaybeUninit;
 
 use alloc::vec::Vec;
+use futures_util::StreamExt;
 use futures_util::task::AtomicWaker;
 
 use crate::allocator::SimplestAllocator;
@@ -320,9 +321,9 @@ impl XhcController {
         self.capability.doorbell()[0].ring(0, 0);
     }
 
-    pub fn process_event(&mut self) -> bool {
+    pub async fn process_event(&mut self) {
         // let mut er_lock = ER_BUF.lock();
-        if let Some(trb) = self.event_ring.next_() {
+        while let Some(trb) = self.event_ring.next().await {
             let v1 = trb.data[0];
             let v2 = trb.data[1];
             let v3 = trb.data[2];
@@ -344,34 +345,8 @@ impl XhcController {
                 error!("TRB type: {} {}", trb.ty(), make_error!(Code::NotImplemented))
             }
             self.event_ring.clean(self);
-
-
         }
-            if self.capability.usb_status().hchalted() {
-                error!("usb halted");
-                for trb in self.event_ring.x.0 {
-                    let v1 = trb.data[0];
-                    let v2 = trb.data[1];
-                    let v3 = trb.data[2];
-                    let v4 = trb.data[3];
-                    debug!("{:x} {:x} {:x} {:x}", v1, v2, v3, v4);
-                }
-                // let max_ports = self.capability.max_ports();
-                // for i in 1..max_ports {
-                //     debug!("port {} {}", i, self.capability.port_sc(i).data.read());
-                // }
-                debug!("{} {}", self.capability.usb_command().data.read(), self.capability.usb_status().data.read());
-                // for trb in self.command_ring.x.0 {
-                //     let v1 = trb.data[0];
-                //     let v2 = trb.data[1];
-                //     let v3 = trb.data[2];
-                //     let v4 = trb.data[3];
-                //     debug!("{:x} {:x} {:x} {:x}", v1, v2, v3, v4);
-                // }
-                debug!("{} {}", self.command_ring.index, self.command_ring.cycle);
-                return false;
-            }
-        true
+        unreachable!()
     }
 }
 

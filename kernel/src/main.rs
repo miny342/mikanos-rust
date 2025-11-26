@@ -26,14 +26,13 @@ mod serial;
 mod entry;
 
 use core::alloc::Layout;
-use core::arch::{asm, global_asm};
+use core::arch::asm;
 use core::panic::PanicInfo;
 use alloc::boxed::Box;
-use heapless::mpmc::Q32;
-use log::{debug, info, warn, error};
+use log::{debug, info, error};
 
 use common::writer_config::FrameBufferConfig;
-use uefi::boot::{MemoryDescriptor, PAGE_SIZE};
+use uefi::boot::PAGE_SIZE;
 use uefi::mem::memory_map::MemoryMap;
 
 use crate::graphics::*;
@@ -74,13 +73,7 @@ fn panic(info: &PanicInfo) -> ! {
     }
 }
 
-enum Message {
-    InterruptXHCI,
-}
-
-static MAIN_Q: Q32<Message> = Q32::new();
-
-fn keyboard_handler(modifire: u8, pressing: [u8; 6]) {
+fn keyboard_handler(_modifire: u8, _pressing: [u8; 6]) {
 
 }
 
@@ -149,9 +142,7 @@ extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     // }
 
 
-    let (width, height) = unsafe {
-        ((framebufferconfig).horizontal_resolution, (framebufferconfig).vertical_resolution)
-    };
+    let (width, height) = ((framebufferconfig).horizontal_resolution, (framebufferconfig).vertical_resolution);
     let screen = unsafe { FrameBuffer::new(framebufferconfig) };
     WindowManager::new(screen);
 
@@ -230,49 +221,14 @@ extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     let xhc_mmio_base = xhc_bar & !0xf;
     debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
 
-    for _ in 0..1 {
-        let mut xhc = unsafe {
-            Box::new(usb::controller::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse::mouse_handler))
-        };
-        xhc.run();
-        xhc.configure_port();
-        // unsafe { asm!("sti") };
-        while xhc.process_event() {}
-        // unsafe { asm!("cli") };
-        debug!("xhc error! restarting...");
-    }
+    let xhc = unsafe {
+        Box::new(usb::controller::XhcController::initialize(xhc_mmio_base, keyboard_handler, mouse::mouse_handler))
+    };
+    let xhc = Box::leak(xhc);
+    xhc.run();
+    xhc.configure_port();
 
-
-
-    // unsafe { asm!("sti") }
-
-    // let mut executor = task::executor::Executor::new();
-    // executor.spawn(task::Task::new(xhc.process_event()));
-    // executor.run();
-
-    // loop {
-    //     unsafe { asm!("cli") };
-    //     if let Some(msg) = MAIN_Q.dequeue() {
-    //         unsafe { asm!("sti") }
-    //         match msg {
-    //             Message::InterruptXHCI => {
-    //                 while xhc.process_event_() {}
-    //             }
-    //         }
-    //     } else {
-    //         unsafe {
-    //             asm!(
-    //                 "sti",
-    //                 "hlt"
-    //             )
-    //         }
-    //     }
-    // }
-
-
-    loop {
-        unsafe {
-            asm!("hlt");
-        }
-    }
+    let mut executor = task::executor::Executor::new();
+    executor.spawn(task::Task::new(xhc.process_event()));
+    executor.run();
 }

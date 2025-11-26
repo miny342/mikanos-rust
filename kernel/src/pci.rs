@@ -1,7 +1,6 @@
 use core::arch::asm;
 use heapless::Vec;
 use spin::Mutex;
-use crate::error;
 use crate::error::*;
 use crate::make_error;
 
@@ -335,23 +334,28 @@ unsafe fn configure_msi_register(dev: &Device, cap_addr: u8, msg_addr: u32, msg_
 }
 
 unsafe fn configure_msi(dev: &Device, msg_addr: u32, msg_data: u32, num_vector_exponent: u32) {
-    let mut cap_addr = (read_config_reg(dev, 0x34) & 0xff) as u8;
+    let mut cap_addr = unsafe { (read_config_reg(dev, 0x34) & 0xff) as u8 };
     let mut msi_cap_addr = 0;
-    // let mut msix_cap_addr = 0;
+    let mut msix_cap_addr = 0;
     while cap_addr != 0 {
-        let header = read_capability_header(dev, cap_addr);
+        let header = unsafe { read_capability_header(dev, cap_addr) };
         if header.cap_id() as u8 == CAPABILITY_MSI {
             msi_cap_addr = cap_addr;
         } else if header.cap_id() as u8 == CAPABILITY_MSIX {
-            // msix_cap_addr = cap_addr;
+            msix_cap_addr = cap_addr;
         }
         cap_addr = header.next_ptr() as u8;
     }
 
     if msi_cap_addr != 0 {
-        return configure_msi_register(dev, msi_cap_addr, msg_addr, msg_data, num_vector_exponent)
+        return unsafe {
+            configure_msi_register(dev, msi_cap_addr, msg_addr, msg_data, num_vector_exponent) 
+        }
     }
-    error!("not found msi");
+    if msix_cap_addr != 0 {
+        todo!("msix is not supported");
+    }
+    todo!("not found msi");
 }
 
 #[derive(PartialEq, Eq)]
