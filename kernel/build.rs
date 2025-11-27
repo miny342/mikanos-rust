@@ -37,4 +37,7 @@ fn main() {
 
     let out_dir = Path::new("target");
     std::fs::copy(&bootloader_image_path, out_dir.join("mikanos-rust.efi")).expect("Failed to copy bootloader image");
+
+    // 常に実行されないと困るので
+    println!("cargo:rerun-if-changed=");
 }

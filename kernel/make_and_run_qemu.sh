@@ -12,6 +12,7 @@ cd ..
 ./run_qemu.sh kernel/disk.img
 
 # QEMUの終了コードを確認して、33(=0x10 << 1 | 1)ならtestの都合上正常終了として扱う
-if [ $? -eq 33 ]; then
+if [ $? -eq 33 ] || [ $? -eq 0 ]; then
   exit 0
 fi
+exit 1

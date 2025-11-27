@@ -164,6 +164,8 @@ fn load_kernel(dir: &mut Directory) -> Option<extern "sysv64" fn(*const FrameBuf
 fn main() -> Status {
     uefi::helpers::init().unwrap();
 
+    log::set_max_level(log::LevelFilter::Error);
+
     info!("Hello, World!");
     let mut fs = boot::get_image_file_system(boot::image_handle()).unwrap();
     let mut root_dir = fs.open_volume().unwrap();

@@ -5,7 +5,7 @@
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
 #![feature(custom_test_frameworks)]
-#![test_runner(crate::test_runner)]
+#![test_runner(kernel::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 mod graphics;
@@ -76,33 +76,6 @@ fn panic(info: &PanicInfo) -> ! {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum QemuExitCode {
-    Success = 0x10,
-    Failed = 0x11,
-}
-
-pub fn exit_qemu(exit_code: QemuExitCode) -> ! {
-    unsafe {
-        core::arch::asm!(
-            "out dx, al",
-            in("dx") 0xf4u16,
-            in("eax") exit_code as u32,
-        );
-    }
-    loop {}
-}
-
-#[cfg(test)]
-fn test_runner(tests: &[&dyn Fn()]) {
-    println!("Running {} tests", tests.len());
-    for test in tests {
-        test();
-    }
-    exit_qemu(QemuExitCode::Success);
-}
-
 #[test_case]
 fn test_works_test() {
     serial_println!("if this printed, test works!");
@@ -114,7 +87,9 @@ fn keyboard_handler(_modifire: u8, _pressing: [u8; 6]) {
 
 static LOGGER: logger::Logger = Logger;
 
-extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
+entry!(kernel_main_new_stack);
+
+pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
     unsafe { disable_interrupt() };
     let framebufferconfig = unsafe { *config };
 
@@ -193,9 +168,6 @@ extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
 
     println!("hello");
 
-    #[cfg(test)]
-    test_main();
-
     let res = pci::scan_all_bus();
     match res {
         Ok(_) => debug!("scan all bus: Success"),
@@ -266,6 +238,9 @@ extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memma
     let xhc = Box::leak(xhc);
     xhc.run();
     xhc.configure_port();
+
+    #[cfg(test)]
+    test_main();
 
     let mut executor = task::executor::Executor::new();
     executor.spawn(task::Task::new(xhc.process_event()));
