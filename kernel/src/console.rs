@@ -8,7 +8,6 @@ use conquer_once::spin::OnceCell;
 use spin::{MutexGuard, Mutex};
 
 use crate::graphics::*;
-use crate::font::*;
 use crate::window::{Window, WindowManager};
 
 const ROW: usize = 45;
@@ -84,7 +83,7 @@ impl Console {
     }
 
     fn write_ascii_with_update(&mut self, writer: &mut MutexGuard<Window>, c: char) {
-        write_ascii(writer, self.cursor_col * 8 + MARGIN, self.cursor_row * 16 + MARGIN, c, &self.color);
+        writer.write_ascii(self.cursor_col * 8 + MARGIN, self.cursor_row * 16 + MARGIN, c, self.color);
         self.cursor_col += 1;
     }
 

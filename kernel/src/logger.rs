@@ -27,9 +27,9 @@ macro_rules! __log {
     ($($arg:tt)*) => {
         if $crate::logger::SERIAL_USABLE.load(core::sync::atomic::Ordering::Relaxed) {
                 $crate::serial_println!($($arg)*)
-        } else {
-                $crate::println!($($arg)*)
         }
+        // 常に画面に出したほうが楽しい
+        $crate::println!($($arg)*)
     }
 }
 

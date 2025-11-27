@@ -18,14 +18,26 @@ pub struct PixelColor {
     pub a: u8,
 }
 
-fn write_rgb_(buffer: &mut [u8], ppsl: usize, x: usize, y: usize, c: &PixelColor) {
+impl PixelColor {
+    pub const BLACK: PixelColor = PixelColor { r: 0, g: 0, b: 0, a: 255 };
+    pub const WHITE: PixelColor = PixelColor { r: 255, g: 255, b: 255, a: 255 };
+    pub const RED: PixelColor = PixelColor { r: 255, g: 0, b: 0, a: 255 };
+    pub const GREEN: PixelColor = PixelColor { r: 0, g: 255, b: 0, a: 255 };
+    pub const BLUE: PixelColor = PixelColor { r: 0, g: 0, b: 255, a: 255 };
+    pub const TRANSPARENT: PixelColor = PixelColor { r: 0, g: 0, b: 0, a: 0 };
+    pub fn from_hex(hex: u32) -> PixelColor {
+        PixelColor { r: ((hex >> 16) & 0xff) as u8, g: ((hex >> 8) & 0xff) as u8, b: (hex & 0xff) as u8, a: 255 }
+    }
+}
+
+fn write_rgb_(buffer: &mut [u8], ppsl: usize, x: usize, y: usize, c: PixelColor) {
     let idx = 4 * (ppsl * y + x);
     buffer[idx] = c.r;
     buffer[idx + 1] = c.g;
     buffer[idx + 2] = c.b;
 }
 
-fn write_bgr_(buffer: &mut [u8], ppsl: usize, x: usize, y: usize, c: &PixelColor) {
+fn write_bgr_(buffer: &mut [u8], ppsl: usize, x: usize, y: usize, c: PixelColor) {
     let idx = 4 * (ppsl * y + x);
     buffer[idx] = c.b;
     buffer[idx + 1] = c.g;
@@ -39,7 +51,7 @@ pub struct FrameBuffer {
     horizontal_resolution: usize,
     vertical_resolution: usize,
     pixel_format: PixelFormat,
-    write_: fn(buffer: &mut [u8], ppsl: usize, x: usize, y: usize, c: &PixelColor),
+    write_: fn(buffer: &mut [u8], ppsl: usize, x: usize, y: usize, c: PixelColor),
 }
 
 impl FrameBuffer {
@@ -65,6 +77,12 @@ impl FrameBuffer {
             }
         }
     }
+    pub fn horizontal_resolution(&self) -> usize {
+        self.horizontal_resolution
+    }
+    pub fn vertical_resolution(&self) -> usize {
+        self.vertical_resolution
+    }
     pub fn fmt(&self) -> PixelFormat {
         self.pixel_format
     }
@@ -76,8 +94,8 @@ impl FrameBuffer {
 
         let dst_width = self.horizontal_resolution as isize;
         let dst_height = self.vertical_resolution as isize;
-        let src_width = self.horizontal_resolution as isize;
-        let src_height = self.vertical_resolution as isize;
+        let src_width = src.horizontal_resolution as isize;
+        let src_height = src.vertical_resolution as isize;
 
         let start_dst_x = isize::max(pos_x, 0) as usize;
         let start_dst_y = isize::max(pos_y, 0) as usize;
@@ -105,7 +123,7 @@ impl FrameBuffer {
             }
         }
     }
-    pub fn write(&mut self, x: usize, y: usize, c: &PixelColor) {
+    pub fn write(&mut self, x: usize, y: usize, c: PixelColor) {
         if x >= self.horizontal_resolution || y >= self.vertical_resolution {
             return;
         }

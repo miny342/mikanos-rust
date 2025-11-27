@@ -325,11 +325,11 @@ impl XhcController {
     pub async fn process_event(&mut self) {
         // let mut er_lock = ER_BUF.lock();
         while let Some(trb) = self.event_ring.next().await {
-            let v1 = trb.data[0];
-            let v2 = trb.data[1];
+            // let v1 = trb.data[0];
+            // let v2 = trb.data[1];
             let v3 = trb.data[2];
-            let v4 = trb.data[3];
-            debug!("trb: {:x} {:x} {:x} {:x}", v1, v2, v3, v4);
+            // let v4 = trb.data[3];
+            // debug!("trb: {:x} {:x} {:x} {:x}", v1, v2, v3, v4);
             if let Some(casted) = trb.cast::<PortStatusChangeEventTRB>() {
                 // debug!("portstatuschangeevent");
                 casted.on_event(self)

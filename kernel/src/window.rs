@@ -42,7 +42,7 @@ impl Window {
     fn draw_to(&self, screen: &mut FrameBuffer) {
         if self.use_alpha {
             for (y, col) in self.data.iter().enumerate() {
-                for (x, c) in col.iter().enumerate().filter(|(_x, c)| c.a != 0) {
+                for (x, &c) in col.iter().enumerate().filter(|(_x, c)| c.a != 0) {
                     let ix = (x as isize) + self.pos_x;
                     let iy = (y as isize) + self.pos_y;
                     if ix < 0 || iy < 0 {
@@ -62,8 +62,8 @@ impl Window {
     pub fn set_use_alpha(&mut self, use_alpha: bool) {
         self.use_alpha = use_alpha
     }
-    pub fn write(&mut self, x: usize, y: usize, c: &PixelColor) {
-        self.data[y][x] = *c;
+    pub fn write(&mut self, x: usize, y: usize, c: PixelColor) {
+        self.data[y][x] = c;
         self.shadow_buffer.write(x, y, c);
     }
     pub fn move_to(&mut self, pos_x: isize, pos_y: isize) {
@@ -76,6 +76,49 @@ impl Window {
     }
     pub fn move_up_buffer(&mut self, value: usize, fill: u8) {
         self.shadow_buffer.move_up(value, fill);
+    }
+    pub fn write_ascii(&mut self, x: usize, y: usize, c: char, color: PixelColor) {
+        let i = c as u8;
+        let f = unsafe { crate::ascii::FONTS.get_unchecked(c as usize) };
+        if (' ' as u8) <= i && i <= ('~' as u8) {
+            for dy in 0..16 {
+                for dx in 0..8 {
+                    if (unsafe { f.get_unchecked(dy) } << dx) & 0x80 != 0 && 
+                        x + dx < self.shadow_buffer.horizontal_resolution() &&
+                        y + dy < self.shadow_buffer.vertical_resolution() {
+                            self.write(x + dx, y + dy, color);
+                    }
+                }
+            }
+        }
+    }
+    pub fn write_string(&mut self, s: &str, color: PixelColor, start_x: usize, start_y: usize) {
+        let mut pos_x = start_x;
+        let mut pos_y = start_y;
+        for b in s.bytes() {
+            let c = b as char;
+            if c == '\n' {
+                pos_x = start_x;
+                pos_y += 16;
+            } else {
+                self.write_ascii(pos_x, pos_y, c, color);
+                pos_x += 8;
+            }
+        }
+    }
+    pub fn draw_rect(&mut self , pos_x: usize, pos_y: usize, width: usize, height: usize, color: PixelColor) {
+        for y in 0..height {
+            for x in 0..width {
+                self.write(pos_x + x, pos_y + y, color);
+            }
+        }
+    }
+    pub fn draw_basic_window(&mut self, title: &str) {
+        let width = self.shadow_buffer.horizontal_resolution();
+        let height = self.shadow_buffer.vertical_resolution();
+        self.draw_rect(0, 0, width, 22, PixelColor::from_hex(0xc6c6c6));
+        self.draw_rect(0, 22, width, height - 22, PixelColor::from_hex(0x161616));
+        self.write_string(title, PixelColor::BLACK, 24, 4);
     }
 }
 

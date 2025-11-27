@@ -10,7 +10,6 @@
 use core::panic::PanicInfo;
 
 pub mod graphics;
-pub mod font;
 pub mod ascii;
 pub mod console;
 pub mod pci;
@@ -33,6 +32,8 @@ extern crate alloc;
 
 #[global_allocator]
 pub static ALLOCATOR: allocator::SimplestAllocator = allocator::SimplestAllocator::empty();
+
+pub static LOGGER: logger::Logger = logger::Logger;
 
 pub trait Testable {
     fn run(&self);

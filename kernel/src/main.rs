@@ -57,8 +57,6 @@ fn keyboard_handler(_modifire: u8, _pressing: [u8; 6]) {
 
 }
 
-static LOGGER: kernel::logger::Logger = Logger;
-
 kernel::entry!(kernel_main_new_stack);
 
 pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
@@ -66,7 +64,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     let framebufferconfig = unsafe { *config };
 
     SERIAL_USABLE.store(unsafe { init_serial() }, core::sync::atomic::Ordering::Relaxed);
-    log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
+    log::set_logger(&kernel::LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
     unsafe {
         kernel::segment::setup_segments();
         kernel::segment::set_ds_all(0);
@@ -210,6 +208,17 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     let xhc = Box::leak(xhc);
     xhc.run();
     xhc.configure_port();
+
+    // xhc ok
+
+    let (main_window_id, main_window) = WindowManager::new_window(180, 68, false, 300, 100);
+    {
+        let mut lck = main_window.lock();
+        lck.draw_basic_window("Hello Window");
+        lck.write_string("Welcome to\nMikanOS Rust World!", PixelColor::WHITE, 16, 28);
+    }
+
+    WindowManager::up_down(main_window_id, 1);
 
     #[cfg(test)]
     test_main();

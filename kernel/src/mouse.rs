@@ -61,13 +61,13 @@ impl MouseCursor {
                     let x_idx = row * 4 + i;
                     let y_idx = col;
                     if v & 0xc0 == 0x40 {
-                        window.write(x_idx, y_idx, &PixelColor { r: 0, g: 0, b: 0, a: 255 })
+                        window.write(x_idx, y_idx, PixelColor::BLACK)
                     }
                     if v & 0xc0 == 0x80 {
-                        window.write(x_idx, y_idx, &PixelColor { r: 255, g: 255, b: 255, a: 255 })
+                        window.write(x_idx, y_idx, PixelColor::WHITE)
                     }
                     if v & 0xc0 == 0x00 {
-                        window.write(x_idx, y_idx, &PixelColor { r: 0, g: 0, b: 0, a: 0 })
+                        window.write(x_idx, y_idx, PixelColor::TRANSPARENT)
                     }
                     v <<= 2;
                 }
