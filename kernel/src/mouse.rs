@@ -4,7 +4,7 @@ use spin::{MutexGuard, Mutex};
 
 use crate::{graphics::{
     PixelColor,
-}, window::{Window, WindowManager}, timer::{lapic_timer_elapsed, stop_lapic_timer, start_lapic_timer}, println, serial_println, debug};
+}, window::{Window, WindowManager}, timer::{lapic_timer_elapsed, stop_lapic_timer, start_lapic_timer}, println, serial_println};
 
 const MOUSE_CURSOR: [[u8; 3]; 14] = [
     [64, 0, 0],

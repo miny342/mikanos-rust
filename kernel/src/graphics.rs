@@ -10,8 +10,6 @@ use common::writer_config::{
     FrameBufferConfig,
 };
 
-use crate::debug;
-
 #[derive(Debug, Clone, Copy)]
 pub struct PixelColor {
     pub r: u8,

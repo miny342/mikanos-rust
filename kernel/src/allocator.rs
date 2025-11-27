@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use spin::Mutex;
 
-use crate::{println, debug};
+use log::debug;
 
 #[derive(Debug)]
 pub struct List {

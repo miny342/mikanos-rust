@@ -1,17 +1,38 @@
 #![no_std]
-
 #![cfg_attr(test, no_main)]
+
 #![feature(sync_unsafe_cell)]
 #![feature(abi_x86_interrupt)]
-#![feature(alloc_error_handler)]
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 use core::panic::PanicInfo;
 
+pub mod graphics;
+pub mod font;
+pub mod ascii;
+pub mod console;
+pub mod pci;
+pub mod error;
+pub mod logger;
+pub mod usb;
+pub mod mouse;
+pub mod interrupt;
+pub mod segment;
+pub mod paging;
+pub mod memory_manager;
+pub mod allocator;
+pub mod task;
+pub mod window;
+pub mod timer;
 pub mod serial;
 pub mod entry;
+
+extern crate alloc;
+
+#[global_allocator]
+pub static ALLOCATOR: allocator::SimplestAllocator = allocator::SimplestAllocator::empty();
 
 pub trait Testable {
     fn run(&self);

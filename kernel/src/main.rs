@@ -3,30 +3,9 @@
 
 #![feature(sync_unsafe_cell)]
 #![feature(abi_x86_interrupt)]
-#![feature(alloc_error_handler)]
 #![feature(custom_test_frameworks)]
 #![test_runner(kernel::test_runner)]
 #![reexport_test_harness_main = "test_main"]
-
-mod graphics;
-mod font;
-mod ascii;
-mod console;
-mod pci;
-mod error;
-mod logger;
-mod usb;
-mod mouse;
-mod interrupt;
-mod segment;
-mod paging;
-mod memory_manager;
-mod allocator;
-mod task;
-mod window;
-mod timer;
-mod serial;
-mod entry;
 
 use core::alloc::Layout;
 use core::arch::asm;
@@ -39,31 +18,24 @@ use common::writer_config::FrameBufferConfig;
 use uefi::boot::PAGE_SIZE;
 use uefi::mem::memory_map::MemoryMap;
 
-use crate::graphics::*;
-use crate::console::*;
-use crate::interrupt::disable_interrupt;
-use crate::logger::*;
-use crate::memory_manager::{
+use kernel::graphics::*;
+use kernel::console::*;
+use kernel::interrupt::disable_interrupt;
+use kernel::logger::*;
+use kernel::memory_manager::{
     FrameID,
     BYTES_PER_FRAME, MANAGER
 };
-use crate::serial::init_serial;
-use crate::timer::initialize_apic_timer;
-use crate::window::WindowManager;
+use kernel::serial::init_serial;
+use kernel::timer::initialize_apic_timer;
+use kernel::window::WindowManager;
+use kernel::pci;
+use kernel::usb;
+use kernel::mouse;
+use kernel::interrupt;
+use kernel::task;
 
 extern crate alloc;
-
-// #[global_allocator]
-// static ALLOCATOR: allocator::LinkedListAllocator = allocator::LinkedListAllocator::empty();
-
-#[global_allocator]
-static ALLOCATOR: allocator::SimplestAllocator = allocator::SimplestAllocator::empty();
-
-#[alloc_error_handler]
-fn on_oom(_layout: Layout) -> ! {
-    panic!("oom");
-}
-
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -78,16 +50,16 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[test_case]
 fn test_works_test() {
-    serial_println!("if this printed, test works!");
+    kernel::serial_println!("if this printed, test works!");
 }
 
 fn keyboard_handler(_modifire: u8, _pressing: [u8; 6]) {
 
 }
 
-static LOGGER: logger::Logger = Logger;
+static LOGGER: kernel::logger::Logger = Logger;
 
-entry!(kernel_main_new_stack);
+kernel::entry!(kernel_main_new_stack);
 
 pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
     unsafe { disable_interrupt() };
@@ -96,10 +68,10 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     SERIAL_USABLE.store(unsafe { init_serial() }, core::sync::atomic::Ordering::Relaxed);
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
     unsafe {
-        segment::setup_segments();
-        segment::set_ds_all(0);
-        segment::set_csss(1 << 3, 2 << 3);
-        paging::setup_identity_page_table();
+        kernel::segment::setup_segments();
+        kernel::segment::set_ds_all(0);
+        kernel::segment::set_csss(1 << 3, 2 << 3);
+        kernel::paging::setup_identity_page_table();
     }
 
     let memmap = unsafe { &*memmap_ptr };
@@ -133,7 +105,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     let start = heap_start.0 * BYTES_PER_FRAME;
     let end = start + heap_frame * BYTES_PER_FRAME;
     unsafe {
-        ALLOCATOR.init(start as *mut u8, end as *mut u8);
+        kernel::ALLOCATOR.init(start as *mut u8, end as *mut u8);
     }
     // initialized memory allocator
 
@@ -166,7 +138,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
 
     initialize_apic_timer();
 
-    println!("hello");
+    kernel::println!("hello");
 
     let res = pci::scan_all_bus();
     match res {

@@ -4,9 +4,10 @@ use core::mem::MaybeUninit;
 use alloc::vec::Vec;
 use futures_util::StreamExt;
 use futures_util::task::AtomicWaker;
+use log::{debug, error};
 
 use crate::allocator::SimplestAllocator;
-use crate::{debug, make_error, error};
+use crate::{make_error, error::Code};
 use crate::error::*;
 
 use crate::usb::trb::{

@@ -9,7 +9,6 @@ use conquer_once::spin::OnceCell;
 use spin::{MutexGuard, Mutex};
 
 use crate::graphics::{PixelColor, FrameBuffer};
-use crate::{println, debug};
 
 
 pub struct Window {

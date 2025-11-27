@@ -1,6 +1,6 @@
 use core::{alloc::{GlobalAlloc, Layout}, ptr::null_mut, sync::atomic::Ordering};
 
-use crate::{allocator::{LinkedListAllocator, List, SimplestAllocator, LIST_SIZE}, debug};
+use crate::allocator::{LinkedListAllocator, List, SimplestAllocator, LIST_SIZE};
 
 impl LinkedListAllocator {
     pub fn alloc_with_boundary_zeroed(&self, size: usize, align: usize, boundary: usize) -> *mut u8 {

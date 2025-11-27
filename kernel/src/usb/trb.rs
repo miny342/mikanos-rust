@@ -3,11 +3,11 @@ use core::slice::from_raw_parts_mut;
 
 use spin::Mutex;
 use heapless::FnvIndexMap;
+use log::{debug, error};
 
 use crate::usb::controller::{ConfigPhase, XhcController};
 use crate::usb::device::{DEVICES_MEM, XhciDevice};
-use crate::{debug, make_error, error};
-use crate::error::*;
+use crate::{make_error, error::Code};
 
 trait TRBtrait {
     const TY: u32;
