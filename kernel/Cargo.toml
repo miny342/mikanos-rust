@@ -17,3 +17,7 @@ futures-util = {version = "0.3.21", default-features = false, features = ["alloc
 bitfield = "0.19.0"
 bitfield-struct = "0.11.0"
 log = "0.4.27"
+
+[[bin]]
+name = "kernel"
+test = false

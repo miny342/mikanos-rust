@@ -13,6 +13,7 @@ use alloc::boxed::Box;
 use alloc::format;
 use futures_util::StreamExt;
 use futures_util::task::AtomicWaker;
+use kernel::serial_println;
 use log::{debug, info, error};
 
 use common::writer_config::FrameBufferConfig;
@@ -45,11 +46,6 @@ fn panic(info: &PanicInfo) -> ! {
             asm!("hlt");
         }
     }
-}
-
-#[test_case]
-fn test_works_test() {
-    kernel::serial_println!("if this printed, test works!");
 }
 
 fn keyboard_handler(_modifire: u8, _pressing: [u8; 6]) {
@@ -104,12 +100,14 @@ async fn counter(window: alloc::sync::Arc<spin::Mutex<kernel::window::Window>>) 
     let mut cnt = 0;
     let mut task = Box::new(TmpTask { state: true});
     while task.next().await.is_some() {
-        {
+        let id = {
             let mut lck = window.lock();
             lck.draw_basic_window("Hello Window");
             lck.write_string(format!("Counter: {:05}", cnt).as_str(), PixelColor::WHITE, 8, 30);
             cnt += 1;
-        }
+            lck.id()
+        };
+        WindowManager::draw_window(id);
     }
 }
 
@@ -270,9 +268,6 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
 
     let (main_window_id, main_window) = WindowManager::new_window(160, 52, false, 300, 100);
     WindowManager::up_down(main_window_id, 1);
-
-    #[cfg(test)]
-    test_main();
 
     let mut executor = task::executor::Executor::new();
     executor.spawn(task::Task::new(xhc.process_event()));

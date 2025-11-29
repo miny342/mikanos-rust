@@ -1,10 +1,9 @@
 use alloc::sync::Arc;
 use conquer_once::spin::OnceCell;
+use log::{debug, warn};
 use spin::Mutex;
 
-use crate::{graphics::{
-    PixelColor,
-}, window::{Window, WindowManager}};
+use crate::{graphics::PixelColor, serial_println, timer::check_time, window::{Window, WindowManager}};
 
 const MOUSE_CURSOR: [[u8; 3]; 14] = [
     [64, 0, 0],
@@ -122,8 +121,15 @@ pub fn mouse_handler(_modifire: u8, move_x: i8, move_y: i8) {
     }
     mouse.pos_x = x as usize;
     mouse.pos_y = y as usize;
-    mouse.window.lock().move_to(x, y);
-    WindowManager::draw();
+    let (old_r, id) = {
+        let mut lck = mouse.window.lock();
+        (lck.move_to(x, y), lck.id())
+    };
+    let t = check_time(|| {
+        WindowManager::draw_rect_area(&old_r);
+        WindowManager::draw_window(id);
+    });
+    warn!("elapsed: {:?}", t);
 }
 
 

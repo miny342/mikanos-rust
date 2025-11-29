@@ -7,6 +7,8 @@ use common::writer_config::{
     FrameBufferConfig,
 };
 
+use crate::{math::{Rectangle, Vector2D}, serial_println};
+
 #[derive(Debug, Clone, Copy)]
 pub struct PixelColor {
     pub r: u8,
@@ -105,8 +107,8 @@ impl FrameBuffer {
         let bytes_per_pixel = (per_pixel + 7) / 8;
         let per_copy = bytes_per_pixel * (end_dst_x - start_dst_x);
 
-        let mut dst_addr = &mut self.frame_buffer[bytes_per_pixel * self.pixels_per_scan_line * start_dst_y + start_dst_x] as *mut u8;
-        let mut src_addr = &src.frame_buffer[bytes_per_pixel * src.pixels_per_scan_line * start_src_y + start_src_x] as *const u8;
+        let mut dst_addr = &mut self.frame_buffer[bytes_per_pixel * self.pixels_per_scan_line * start_dst_y + bytes_per_pixel * start_dst_x] as *mut u8;
+        let mut src_addr = &src.frame_buffer[bytes_per_pixel * src.pixels_per_scan_line * start_src_y + bytes_per_pixel * start_src_x] as *const u8;
 
         // debug!("dst from: {:p}, to: {:p}", self.frame_buffer.as_ptr(), self.frame_buffer.last().unwrap() as *const u8);
         // debug!("src from: {:p}, to: {:p}", src.frame_buffer.as_ptr(), src.frame_buffer.last().unwrap() as *const u8);
@@ -115,6 +117,33 @@ impl FrameBuffer {
             unsafe {
                 copy_nonoverlapping(src_addr, dst_addr, per_copy);
                 // debug!("dst: {:p}, src: {:p}, len: {}", dst_addr, src_addr, per_copy);
+                dst_addr = dst_addr.add(bytes_per_pixel * self.pixels_per_scan_line);
+                src_addr = src_addr.add(bytes_per_pixel * src.pixels_per_scan_line);
+            }
+        }
+    }
+    pub fn copy_area(&mut self, src_area: &Rectangle, src: &FrameBuffer, r: &Rectangle) {
+        if self.pixel_format != src.pixel_format {
+            panic!("pixel format not equal")
+        }
+        let per_pixel = bits_per_pixel(self.pixel_format).unwrap();
+
+        let dst_width = self.horizontal_resolution as isize;
+        let dst_height = self.vertical_resolution as isize;
+
+        let Some(dst_area) = Rectangle::new(Vector2D::new(0, 0), Vector2D::new(dst_width, dst_height)).intersect(r) else { return };
+        let Some(dst_area) = dst_area.intersect(src_area) else { return };
+        
+        let bytes_per_pixel = (per_pixel + 7) / 8;
+        let per_copy = bytes_per_pixel * (dst_area.size().x as usize);
+
+        let mut dst_addr = &raw mut self.frame_buffer[bytes_per_pixel * self.pixels_per_scan_line * dst_area.pos.y as usize + bytes_per_pixel * dst_area.pos.x as usize];
+        let mut src_addr = &raw const src.frame_buffer[bytes_per_pixel * src.pixels_per_scan_line * (dst_area.pos.y - src_area.pos.y) as usize + bytes_per_pixel * (dst_area.pos.x - src_area.pos.x) as usize];
+
+        for _ in 0..dst_area.size().y {
+            unsafe {
+                copy_nonoverlapping(src_addr, dst_addr, per_copy);
+                // serial_println!("dst: {:p}, src: {:p}, len: {}, {}, {}", dst_addr, src_addr, per_copy, self.pixels_per_scan_line, src.pixels_per_scan_line);
                 dst_addr = dst_addr.add(bytes_per_pixel * self.pixels_per_scan_line);
                 src_addr = src_addr.add(bytes_per_pixel * src.pixels_per_scan_line);
             }

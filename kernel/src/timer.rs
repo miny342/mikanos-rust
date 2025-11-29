@@ -28,3 +28,18 @@ pub fn stop_lapic_timer() {
         *INITIAL_COUNT = 0;
     }
 }
+
+static mut SUM: usize = 0;
+static mut SUM_: usize = 0;
+
+pub fn check_time<T: Fn() -> ()>(f: T) -> (u32, usize) {
+    start_lapic_timer();
+    f();
+    let elapsed = lapic_timer_elapsed();
+    stop_lapic_timer();
+    unsafe {
+        SUM += elapsed as usize;
+        SUM_ += 1;
+    }
+    (elapsed, unsafe { SUM / SUM_ })
+}

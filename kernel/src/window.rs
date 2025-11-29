@@ -8,14 +8,15 @@ use conquer_once::spin::OnceCell;
 use spin::Mutex;
 
 use crate::graphics::{PixelColor, FrameBuffer};
+use crate::math::{Rectangle, Vector2D};
+use crate::serial_println;
 
 
 pub struct Window {
     data: Vec<Vec<PixelColor>>,
     use_alpha: bool,
     id: usize,
-    pos_x: isize,
-    pos_y: isize,
+    area: Rectangle,
     shadow_buffer: FrameBuffer,
 }
 
@@ -33,8 +34,7 @@ impl Window {
             data: m_vec![m_vec![PixelColor { r: 0, g: 0, b: 0, a: 255}; width]; height],
             use_alpha,
             id: NEXT_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed),
-            pos_x,
-            pos_y,
+            area: Rectangle::new(Vector2D::new(pos_x, pos_y), Vector2D::new(width as isize, height as isize)),
             shadow_buffer: unsafe { FrameBuffer::new(config) }
         }
     }
@@ -42,8 +42,8 @@ impl Window {
         if self.use_alpha {
             for (y, col) in self.data.iter().enumerate() {
                 for (x, &c) in col.iter().enumerate().filter(|(_x, c)| c.a != 0) {
-                    let ix = (x as isize) + self.pos_x;
-                    let iy = (y as isize) + self.pos_y;
+                    let ix = (x as isize) + self.area.pos.x;
+                    let iy = (y as isize) + self.area.pos.y;
                     if ix < 0 || iy < 0 {
                         continue;
                     }
@@ -55,7 +55,26 @@ impl Window {
                 }
             }
         } else {
-            screen.copy(self.pos_x, self.pos_y, &self.shadow_buffer);
+            screen.copy(self.area.pos.x, self.area.pos.y, &self.shadow_buffer);
+        }
+    }
+    fn draw_rect_area_to(&self, screen: &mut FrameBuffer, r: &Rectangle) {
+        if self.use_alpha {
+            let r = self.area.intersect(r);
+            if let Some(r) = r {
+                for y in r.pos.y..r.pos.y + r.size().y {
+                    for x in r.pos.x..r.pos.x + r.size().x {
+                        let c = self.data[(y - self.area.pos.y) as usize][(x - self.area.pos.x) as usize];
+                        if c.a == 255 {
+                            screen.write(x as usize, y as usize, c);
+                        } else if c.a != 0 {
+                            todo!();
+                        }
+                    }
+                }
+            }
+        } else {
+            screen.copy_area(&self.area, &self.shadow_buffer, r);
         }
     }
     pub fn set_use_alpha(&mut self, use_alpha: bool) {
@@ -65,13 +84,15 @@ impl Window {
         self.data[y][x] = c;
         self.shadow_buffer.write(x, y, c);
     }
-    pub fn move_to(&mut self, pos_x: isize, pos_y: isize) {
-        self.pos_x = pos_x;
-        self.pos_y = pos_y;
+    pub fn move_to(&mut self, pos_x: isize, pos_y: isize) -> Rectangle {
+        let old_r = self.area.clone();
+        self.area.pos.x = pos_x;
+        self.area.pos.y = pos_y;
+        old_r
     }
     pub fn move_relative(&mut self, diff_x: isize, diff_y: isize) {
-        self.pos_x += diff_x;
-        self.pos_y += diff_y;
+        self.area.pos.x += diff_x;
+        self.area.pos.y += diff_y;
     }
     pub fn move_up_buffer(&mut self, value: usize, fill: u8) {
         self.shadow_buffer.move_up(value, fill);
@@ -105,19 +126,22 @@ impl Window {
             }
         }
     }
-    pub fn draw_rect(&mut self , pos_x: usize, pos_y: usize, width: usize, height: usize, color: PixelColor) {
-        for y in 0..height {
-            for x in 0..width {
-                self.write(pos_x + x, pos_y + y, color);
+    pub fn draw_rect(&mut self, r: &Rectangle, color: PixelColor) {
+        for y in 0..r.size().y {
+            for x in 0..r.size().x {
+                self.write((r.pos.x + x) as usize, (r.pos.y + y) as usize, color);
             }
         }
     }
     pub fn draw_basic_window(&mut self, title: &str) {
         let width = self.shadow_buffer.horizontal_resolution();
         let height = self.shadow_buffer.vertical_resolution();
-        self.draw_rect(0, 0, width, 22, PixelColor::from_hex(0xc6c6c6));
-        self.draw_rect(0, 22, width, height - 22, PixelColor::from_hex(0x161616));
+        self.draw_rect(&Rectangle::new(Vector2D::new(0, 0), Vector2D::new(width as isize, 22)), PixelColor::from_hex(0xc6c6c6));
+        self.draw_rect(&Rectangle::new(Vector2D::new(0, 22), Vector2D::new(width as isize, height as isize - 22)), PixelColor::from_hex(0x161616));
         self.write_string(title, PixelColor::BLACK, 24, 4);
+    }
+    pub fn id(&self) -> usize {
+        self.id
     }
 }
 
@@ -156,6 +180,25 @@ impl WindowManager {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
         let screen = unsafe { &mut *(&mut mgr.screen_buffer as *mut FrameBuffer) };
         mgr.stack.iter().map(|v| v.lock().draw_to(screen)).for_each(drop);
+    }
+    pub fn draw_rect_area(r: &Rectangle) {
+        let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
+        let screen = unsafe { &mut *(&mut mgr.screen_buffer as *mut FrameBuffer) };
+        mgr.stack.iter().map(|v| v.lock().draw_rect_area_to(screen, r)).for_each(drop);
+    }
+    pub fn draw_window(id: usize) {
+        let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
+        let screen = unsafe { &mut *(&mut mgr.screen_buffer as *mut FrameBuffer) };
+        let mut rect = None;
+        for window in mgr.stack.iter() {
+            let w = window.lock();
+            if w.id == id {
+                rect = Some(w.area.clone());
+            }
+            if let Some(ref r) = rect {
+                w.draw_rect_area_to(screen, r);
+            }
+        }
     }
     pub fn hide(id: usize) {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();

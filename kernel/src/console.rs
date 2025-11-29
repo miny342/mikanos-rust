@@ -24,8 +24,9 @@ macro_rules! println {
 
 pub fn _print(args: fmt::Arguments) {
     if let Ok(c) = Console::get() {
-        c.lock().write_fmt(args).unwrap();
-        WindowManager::draw();
+        let mut lck = c.lock();
+        lck.write_fmt(args).unwrap();
+        WindowManager::draw_window(lck._window_id);
     }
 }
 

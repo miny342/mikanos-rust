@@ -27,6 +27,7 @@ pub mod window;
 pub mod timer;
 pub mod serial;
 pub mod entry;
+pub mod math;
 
 extern crate alloc;
 
@@ -39,7 +40,7 @@ pub trait Testable {
 
 impl<T> Testable for T where T: Fn() {
     fn run(&self) {
-        serial_print!("{}...\n", core::any::type_name::<Self>());
+        serial_print!("{}...\t", core::any::type_name::<Self>());
         self();
         serial_println!("[ok]");
     }
@@ -85,7 +86,10 @@ pub fn test_panic_handler(info: &PanicInfo) -> ! {
 entry!(crate::kernel_test);
 
 #[cfg(test)]
-pub extern "sysv64" fn kernel_test(config: *const common::writer_config::FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
+pub extern "sysv64" fn kernel_test(_config: *const common::writer_config::FrameBufferConfig, _memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
+    // ロガーのみ初期化
+    logger::init_serial_and_logger();
+    log::set_max_level(log::LevelFilter::Trace);
     test_main();
     exit_qemu(QemuExitCode::Failed);
 }
