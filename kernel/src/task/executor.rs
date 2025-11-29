@@ -1,4 +1,4 @@
-use crate::interrupt::{disable_interrupt, enable_and_halt_interrupt, enable_interrupt};
+use crate::{interrupt::{disable_interrupt, enable_and_halt_interrupt, enable_interrupt}, println};
 
 use super::{Task, TaskId};
 use alloc::{collections::BTreeMap, sync::Arc, task::Wake};
@@ -32,6 +32,7 @@ impl Executor {
                 Some(task) => task,
                 None => continue
             };
+            // log::debug!("queue {:?}", self.task_queue.len());
             let waker = self.waker_cache.entry(task_id).or_insert_with(|| TaskWaker::new(task_id, Arc::clone(&self.task_queue)));
             let mut context = Context::from_waker(waker);
             match task.poll(&mut context) {
@@ -44,6 +45,8 @@ impl Executor {
         }
     }
     pub fn run(&mut self) -> ! {
+        // 割り込み有効化
+        unsafe { enable_interrupt(); }
         loop {
             self.run_ready_tasks();
             unsafe {

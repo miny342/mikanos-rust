@@ -7,11 +7,12 @@
 #![test_runner(kernel::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use core::alloc::Layout;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use alloc::boxed::Box;
-use log::trace;
+use alloc::format;
+use futures_util::StreamExt;
+use futures_util::task::AtomicWaker;
 use log::{debug, info, error};
 
 use common::writer_config::FrameBufferConfig;
@@ -57,9 +58,67 @@ fn keyboard_handler(_modifire: u8, _pressing: [u8; 6]) {
 
 }
 
+static TMP_WAKER: AtomicWaker = AtomicWaker::new();
+static TMP2_WAKER: AtomicWaker = AtomicWaker::new();
+
+struct TmpTask {state: bool}
+
+impl futures_util::Stream for TmpTask {
+    type Item = ();
+    fn poll_next(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Option<Self::Item>> {
+        if self.state {
+            TMP2_WAKER.wake();
+            self.get_mut().state = false;
+            core::task::Poll::Ready(Some(()))
+        } else {
+            TMP_WAKER.register(cx.waker());
+            self.get_mut().state = true;
+            core::task::Poll::Pending
+        }
+    }
+}
+
+struct Tmp2Task {state: bool}
+
+impl futures_util::Stream for Tmp2Task {
+    type Item = ();
+    fn poll_next(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Option<Self::Item>> {
+        if self.state {
+            TMP_WAKER.wake();
+            self.get_mut().state = false;
+            core::task::Poll::Ready(Some(()))
+        } else {
+            TMP2_WAKER.register(cx.waker());
+            self.get_mut().state = true;
+            core::task::Poll::Pending
+        }
+    }
+}
+
+async fn tmp_task() {
+    let mut task = Box::new(Tmp2Task { state: true});
+    while task.next().await.is_some() {
+        debug!("tmp task running");
+    }
+}
+
+async fn counter(window: alloc::sync::Arc<spin::Mutex<kernel::window::Window>>) {
+    let mut cnt = 0;
+    let mut task = Box::new(TmpTask { state: true});
+    while task.next().await.is_some() {
+        {
+            let mut lck = window.lock();
+            lck.draw_basic_window("Hello Window");
+            lck.write_string(format!("Counter: {:05}", cnt).as_str(), PixelColor::WHITE, 8, 30);
+            cnt += 1;
+        }
+    }
+}
+
 kernel::entry!(kernel_main_new_stack);
 
 pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
+    // 初期化は割り込みなしにしておく
     unsafe { disable_interrupt() };
     let framebufferconfig = unsafe { *config };
 
@@ -211,13 +270,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
 
     // xhc ok
 
-    let (main_window_id, main_window) = WindowManager::new_window(180, 68, false, 300, 100);
-    {
-        let mut lck = main_window.lock();
-        lck.draw_basic_window("Hello Window");
-        lck.write_string("Welcome to\nMikanOS Rust World!", PixelColor::WHITE, 16, 28);
-    }
-
+    let (main_window_id, main_window) = WindowManager::new_window(160, 52, false, 300, 100);
     WindowManager::up_down(main_window_id, 1);
 
     #[cfg(test)]
@@ -225,5 +278,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
 
     let mut executor = task::executor::Executor::new();
     executor.spawn(task::Task::new(xhc.process_event()));
+    executor.spawn(task::Task::new(counter(main_window)));
+    executor.spawn(task::Task::new(tmp_task()));
     executor.run();
 }
