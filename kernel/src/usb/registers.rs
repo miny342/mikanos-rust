@@ -1,7 +1,7 @@
 use core::ptr::slice_from_raw_parts_mut;
 use core::slice::from_raw_parts_mut;
 
-use volatile_register::{RW, RO, WO};
+use volatile_register::RW;
 
 
 #[repr(C)]
@@ -78,7 +78,7 @@ impl CommandRingControlRegister {
     //     unsafe { self.data.write((self.data.read() & 0x3f) | value) }
     // }
     pub unsafe fn set_value(&mut self, value: u64) {
-        self.data.write(value);
+        unsafe { self.data.write(value); }
     }
 }
 

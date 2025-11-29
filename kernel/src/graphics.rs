@@ -1,9 +1,6 @@
-use core::intrinsics::{copy, write_bytes};
-use core::{mem::MaybeUninit, ptr::slice_from_raw_parts_mut, intrinsics::copy_nonoverlapping};
-use alloc::{vec::Vec, boxed::Box};
+use core::ptr::{copy, copy_nonoverlapping, slice_from_raw_parts_mut, write_bytes};
+use alloc::boxed::Box;
 use alloc::vec as m_vec;
-use spin::Mutex;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 use common::writer_config::{
     PixelFormat,
@@ -61,7 +58,7 @@ impl FrameBuffer {
         let (from_vec, buffer) = if config.frame_buffer.is_null() {
             (true, m_vec![0u8; len].leak())
         } else {
-            (false, &mut *slice_from_raw_parts_mut(config.frame_buffer, len))
+            (false, unsafe { &mut *slice_from_raw_parts_mut(config.frame_buffer, len) })
         };
         FrameBuffer {
             frame_buffer: buffer,

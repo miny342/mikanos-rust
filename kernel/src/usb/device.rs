@@ -151,7 +151,7 @@ impl InputContextEnum {
 pub struct XhciDevice {
     pub device_ctx: DeviceContextEnum,
     pub input_ctx: InputContextEnum,
-    pub slot_id: u8,
+    pub _slot_id: u8,
     pub buf: [u8; 512],
     pub doorbell: u64,
     pub num_configuration: u8,
@@ -242,16 +242,7 @@ impl XhciDevice {
     }
 }
 
-type DeviceMemType = [Mutex<Option<XhciDevice>>; (MAX_SLOTS_EN + 1) as usize];
+type DeviceMemInnerType = Mutex<Option<XhciDevice>>;
+type DeviceMemType = [DeviceMemInnerType; (MAX_SLOTS_EN + 1) as usize];
 
-const unsafe fn device_mem_init() -> DeviceMemType {
-    let mut arr = core::mem::MaybeUninit::<DeviceMemType>::uninit().assume_init();
-    let mut outer = 0;
-    while outer < (MAX_SLOTS_EN + 1) as usize {
-        arr[outer] = Mutex::new(None);
-        outer += 1;
-    }
-    arr
-}
-
-pub static DEVICES_MEM: DeviceMemType = unsafe { device_mem_init() } ;
+pub static DEVICES_MEM: DeviceMemType = [const { Mutex::new(None) }; (MAX_SLOTS_EN + 1) as usize];

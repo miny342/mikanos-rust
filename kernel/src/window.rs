@@ -1,4 +1,3 @@
-use core::intrinsics::copy;
 use core::ptr::null_mut;
 use core::sync::atomic::AtomicUsize;
 
@@ -6,7 +5,7 @@ use alloc::{vec::Vec, sync::Arc};
 use alloc::vec as m_vec;
 use common::writer_config::{FrameBufferConfig, PixelFormat};
 use conquer_once::spin::OnceCell;
-use spin::{MutexGuard, Mutex};
+use spin::Mutex;
 
 use crate::graphics::{PixelColor, FrameBuffer};
 

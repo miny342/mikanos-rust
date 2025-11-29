@@ -57,90 +57,109 @@ fn add_device(bus: u8, device: u8, func: u8, header_type: u8, class_code: ClassC
 }
 
 unsafe fn scan_func(bus: u8, device: u8, func: u8) -> Result<(), Error> {
-    let class_code = read_class_code(bus, device, func);
-    let header_type = read_header_type(bus, device, func);
-    add_device(bus, device, func, header_type, class_code)?;
+    unsafe {
+        let class_code = read_class_code(bus, device, func);
+        let header_type = read_header_type(bus, device, func);
+        add_device(bus, device, func, header_type, class_code)?;
 
-    if class_code.match2(0x06, 0x04) {
-        let bus_numbers = read_bus_numbers(bus, device, func);
-        let secondary_bus = ((bus_numbers >> 8) & 0xff) as u8;
-        return scan_bus(secondary_bus);
+        if class_code.match2(0x06, 0x04) {
+            let bus_numbers = read_bus_numbers(bus, device, func);
+            let secondary_bus = ((bus_numbers >> 8) & 0xff) as u8;
+            return scan_bus(secondary_bus);
+        }
     }
-
     Ok(())
 }
 
 unsafe fn scan_device(bus: u8, device: u8) -> Result<(), Error> {
-    scan_func(bus, device, 0)?;
+    unsafe {
+        scan_func(bus, device, 0)?;
 
-    if is_single_function_device(read_header_type(bus, device, 0)) {
-        return Ok(())
-    }
-
-    for func in 1u8..8 {
-        if read_vendor_id(bus, device, func) == 0xffff {
-            continue;
+        if is_single_function_device(read_header_type(bus, device, 0)) {
+            return Ok(())
         }
-        scan_func(bus, device, func)?;
+
+        for func in 1u8..8 {
+            if read_vendor_id(bus, device, func) == 0xffff {
+                continue;
+            }
+            scan_func(bus, device, func)?;
+        }
     }
     Ok(())
 }
 
 unsafe fn scan_bus(bus: u8) -> Result<(), Error> {
-    for device in 0u8..32 {
-        if read_vendor_id(bus, device, 0) == 0xffff {
-            continue;
-        }
-        scan_device(bus, device)?;
+    unsafe {
+        for device in 0u8..32 {
+            if read_vendor_id(bus, device, 0) == 0xffff {
+                continue;
+            }
+            scan_device(bus, device)?;
+        } 
     }
     Ok(())
 }
 
 
 pub unsafe fn write_address(addr: u32) {
-    asm!(
-        "out dx, eax",
-        in("dx") CONFIG_ADDR,
-        in("eax") addr,
-    )
+    unsafe {
+        asm!(
+            "out dx, eax",
+            in("dx") CONFIG_ADDR,
+            in("eax") addr,
+        )
+    }
 }
 
 pub unsafe fn write_data(value: u32) {
-    asm!(
-        "out dx, eax",
-        in("dx") CONFIG_DATA,
-        in("eax") value,
-    )
+    unsafe {
+        asm!(
+            "out dx, eax",
+            in("dx") CONFIG_DATA,
+            in("eax") value,
+        )
+    }
 }
 
 pub unsafe fn read_data() -> u32 {
-    let ret: u32;
-    asm!(
-        "in eax, dx",
-        in("dx") CONFIG_DATA,
-        out("eax") ret,
-    );
-    ret
+    unsafe {
+        let ret: u32;
+        asm!(
+            "in eax, dx",
+            in("dx") CONFIG_DATA,
+            out("eax") ret,
+        );
+        ret
+    }
 }
 
 pub unsafe fn read_vendor_id(bus: u8, device: u8, func: u8) -> u16 {
-    write_address(make_address(bus, device, func, 0x00));
-    (read_data() & 0xffff) as u16
+    unsafe {
+        write_address(make_address(bus, device, func, 0x00));
+        (read_data() & 0xffff) as u16
+    }
 }
 
 pub unsafe fn read_device_id(bus: u8, device: u8, func: u8) -> u16 {
-    write_address(make_address(bus, device, func, 0x00));
-    (read_data() >> 16) as u16
+    unsafe {
+        write_address(make_address(bus, device, func, 0x00));
+        (read_data() >> 16) as u16
+    }
 }
 
 pub unsafe fn read_header_type(bus: u8, device: u8, func: u8) -> u8 {
-    write_address(make_address(bus, device, func, 0x0c));
-    ((read_data() >> 16) & 0xff) as u8
+    unsafe {
+        write_address(make_address(bus, device, func, 0x0c));
+        ((read_data() >> 16) & 0xff) as u8
+    }
 }
 
 pub unsafe fn read_class_code(bus: u8, device: u8, func: u8) -> ClassCode {
-    write_address(make_address(bus, device, func, 0x08));
-    let reg = read_data();
+    unsafe {
+        write_address(make_address(bus, device, func, 0x08));
+    }
+    let reg = unsafe { read_data() };
     ClassCode {
         base: ((reg >> 24) & 0xff) as u8,
         sub: ((reg >> 16) & 0xff) as u8,
@@ -149,8 +168,10 @@ pub unsafe fn read_class_code(bus: u8, device: u8, func: u8) -> ClassCode {
 }
 
 pub unsafe fn read_bus_numbers(bus: u8, device: u8, func: u8) -> u32 {
-    write_address(make_address(bus, device, func, 0x18));
-    read_data()
+    unsafe {
+        write_address(make_address(bus, device, func, 0x18));
+        read_data()
+    }
 }
 
 pub fn is_single_function_device(header_type: u8) -> bool {
@@ -175,13 +196,17 @@ pub fn scan_all_bus() -> Result<(), Error> {
 }
 
 pub unsafe fn read_config_reg(dev: &Device, reg_addr: u8) -> u32 {
-    write_address(make_address(dev.bus, dev.device, dev.func, reg_addr));
-    read_data()
+    unsafe {
+        write_address(make_address(dev.bus, dev.device, dev.func, reg_addr));
+        read_data()
+    }
 }
 
 pub unsafe fn write_config_reg(dev: &Device, reg_addr: u8, value: u32) {
-    write_address(make_address(dev.bus, dev.device, dev.func, reg_addr));
-    write_data(value);
+    unsafe {
+        write_address(make_address(dev.bus, dev.device, dev.func, reg_addr));
+        write_data(value);
+    }
 }
 
 const fn calc_bar_address(bar_index: u32) -> u8 {
@@ -193,7 +218,7 @@ pub unsafe fn read_bar(dev: &Device, bar_index: u32) -> Result<u64, Error> {
         return Err(make_error!(Code::IndexOutOfRange));
     }
     let addr = calc_bar_address(bar_index);
-    let bar = read_config_reg(dev, addr);
+    let bar = unsafe { read_config_reg(dev, addr) };
 
     if bar & 4 == 0 {
         return Ok(bar as u64)
@@ -203,7 +228,7 @@ pub unsafe fn read_bar(dev: &Device, bar_index: u32) -> Result<u64, Error> {
         return Err(make_error!(Code::IndexOutOfRange))
     }
 
-    let bar_upper = read_config_reg(dev, addr + 4) as u64;
+    let bar_upper = unsafe { read_config_reg(dev, addr + 4) as u64 };
     Ok(bar as u64 | bar_upper << 32)
 }
 
@@ -218,7 +243,7 @@ impl CapabilityHeader {
     fn next_ptr(&self) -> u32 {
         (self.data >> 8) & 0xff
     }
-    fn cap(&self) -> u32 {
+    fn _cap(&self) -> u32 {
         (self.data >> 16) & 0xffff
     }
 }
@@ -228,7 +253,7 @@ const CAPABILITY_MSIX: u8 = 0x11;
 
 unsafe fn read_capability_header(dev: &Device, addr: u8) -> CapabilityHeader {
     CapabilityHeader {
-        data: read_config_reg(dev, addr)
+        data: unsafe { read_config_reg(dev, addr) }
     }
 }
 
@@ -242,13 +267,13 @@ struct MSICapability {
 }
 
 impl MSICapability {
-    fn cap_id(&self) -> u32 {
+    fn _cap_id(&self) -> u32 {
         self.data & 0xff
     }
-    fn next_ptr(&self) -> u32 {
+    fn _next_ptr(&self) -> u32 {
         (self.data >> 8) & 0xff
     }
-    fn msi_enable(&self) -> u32 {
+    fn _msi_enable(&self) -> u32 {
         (self.data >> 16) & 0x1
     }
     fn set_msi_enable(&mut self, value: u32) {
@@ -257,7 +282,7 @@ impl MSICapability {
     fn multi_msg_capable(&self) -> u32 {
         (self.data >> 17) & 0b111
     }
-    fn multi_msg_enable(&self) -> u32 {
+    fn _multi_msg_enable(&self) -> u32 {
         (self.data >> 20) & 0x111
     }
     fn set_multi_msg_enable(&mut self, value: u32) {
@@ -280,45 +305,49 @@ unsafe fn read_msi_capability(dev: &Device, cap_addr: u8) -> MSICapability {
         mask_bits: 0,
         pending_bits: 0
     };
-    msi_cap.data = read_config_reg(dev, cap_addr);
-    msi_cap.msg_addr = read_config_reg(dev, cap_addr + 4);
+    unsafe {
+        msi_cap.data = read_config_reg(dev, cap_addr);
+        msi_cap.msg_addr = read_config_reg(dev, cap_addr + 4);
 
-    let mut msg_data_addr = cap_addr + 8;
-    if msi_cap.addr_64_capable() != 0 {
-        msi_cap.msg_upper_addr = read_config_reg(dev, cap_addr + 8);
-        msg_data_addr = cap_addr + 12;
-    }
+        let mut msg_data_addr = cap_addr + 8;
+        if msi_cap.addr_64_capable() != 0 {
+            msi_cap.msg_upper_addr = read_config_reg(dev, cap_addr + 8);
+            msg_data_addr = cap_addr + 12;
+        }
 
-    msi_cap.msg_data = read_config_reg(dev, msg_data_addr);
+        msi_cap.msg_data = read_config_reg(dev, msg_data_addr);
 
-    if msi_cap.per_vector_mask_capable() != 0 {
-        msi_cap.mask_bits = read_config_reg(dev, msg_data_addr + 4);
-        msi_cap.pending_bits = read_config_reg(dev, msg_data_addr + 8);
+        if msi_cap.per_vector_mask_capable() != 0 {
+            msi_cap.mask_bits = read_config_reg(dev, msg_data_addr + 4);
+            msi_cap.pending_bits = read_config_reg(dev, msg_data_addr + 8);
+        }
     }
 
     msi_cap
 }
 
 unsafe fn write_msi_capability(dev: &Device, cap_addr: u8, msi_cap: &MSICapability) {
-    write_config_reg(dev, cap_addr, msi_cap.data);
-    write_config_reg(dev, cap_addr + 4, msi_cap.msg_addr);
+    unsafe {
+        write_config_reg(dev, cap_addr, msi_cap.data);
+        write_config_reg(dev, cap_addr + 4, msi_cap.msg_addr);
 
-    let mut msg_data_addr = cap_addr + 8;
-    if msi_cap.addr_64_capable() != 0 {
-        write_config_reg(dev, cap_addr + 8, msi_cap.msg_upper_addr);
-        msg_data_addr = cap_addr + 12;
-    }
+        let mut msg_data_addr = cap_addr + 8;
+        if msi_cap.addr_64_capable() != 0 {
+            write_config_reg(dev, cap_addr + 8, msi_cap.msg_upper_addr);
+            msg_data_addr = cap_addr + 12;
+        }
 
-    write_config_reg(dev, msg_data_addr, msi_cap.msg_data);
+        write_config_reg(dev, msg_data_addr, msi_cap.msg_data);
 
-    if msi_cap.per_vector_mask_capable() != 0 {
-        write_config_reg(dev, msg_data_addr + 4, msi_cap.mask_bits);
-        write_config_reg(dev, msg_data_addr + 8, msi_cap.pending_bits);
+        if msi_cap.per_vector_mask_capable() != 0 {
+            write_config_reg(dev, msg_data_addr + 4, msi_cap.mask_bits);
+            write_config_reg(dev, msg_data_addr + 8, msi_cap.pending_bits);
+        }
     }
 }
 
 unsafe fn configure_msi_register(dev: &Device, cap_addr: u8, msg_addr: u32, msg_data: u32, num_vector_exponent: u32) {
-    let mut msi_cap = read_msi_capability(dev, cap_addr);
+    let mut msi_cap = unsafe { read_msi_capability(dev, cap_addr) };
 
     if msi_cap.multi_msg_capable() <= num_vector_exponent {
         msi_cap.set_multi_msg_enable(msi_cap.multi_msg_capable())
@@ -330,7 +359,9 @@ unsafe fn configure_msi_register(dev: &Device, cap_addr: u8, msg_addr: u32, msg_
     msi_cap.msg_addr = msg_addr;
     msi_cap.msg_data = msg_data;
 
-    write_msi_capability(dev, cap_addr, &msi_cap);
+    unsafe {
+        write_msi_capability(dev, cap_addr, &msi_cap);
+    }
 }
 
 unsafe fn configure_msi(dev: &Device, msg_addr: u32, msg_data: u32, num_vector_exponent: u32) {
@@ -379,7 +410,9 @@ pub unsafe fn configure_msi_fixed_destination(dev: &Device, apic_id: u8, trigger
     if trigger_mode == MSITriggerMode::Level {
         msg_data |= 0xc000
     }
-    configure_msi(dev, msg_addr, msg_data, num_vector_exponent);
+    unsafe {
+        configure_msi(dev, msg_addr, msg_data, num_vector_exponent);
+    }
 }
 
 

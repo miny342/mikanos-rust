@@ -21,19 +21,23 @@ pub unsafe fn setup_identity_page_table() {
     let pdp = PDP_TABLE.get();
     let page_directory = PAGE_DIRECTORY.get();
 
-    (*pml4).0[0] = (pdp as u64) | 0x3;
-    for i_pdpt in 0..PAGE_DIRECTORY_COUNT {
-        (*pdp).0[i_pdpt] = (&raw mut (*page_directory).0[i_pdpt] as u64) | 0x3;
-        for i_pd in 0..512 {
-            (*page_directory).0[i_pdpt][i_pd] = i_pdpt as u64 * PAGE_SIZE_1G + i_pd as u64 * PAGE_SIZE_2M | 0x83;
+    unsafe {
+        (*pml4).0[0] = (pdp as u64) | 0x3;
+        for i_pdpt in 0..PAGE_DIRECTORY_COUNT {
+            (*pdp).0[i_pdpt] = (&raw mut (*page_directory).0[i_pdpt] as u64) | 0x3;
+            for i_pd in 0..512 {
+                (*page_directory).0[i_pdpt][i_pd] = i_pdpt as u64 * PAGE_SIZE_1G + i_pd as u64 * PAGE_SIZE_2M | 0x83;
+            }
         }
+        set_cr3(pml4 as u64);
     }
-    set_cr3(pml4 as u64);
 }
 
 unsafe fn set_cr3(value: u64) {
-    asm!(
-        "mov cr3, {}",
-        in(reg) value,
-    )
+    unsafe {
+        asm!(
+            "mov cr3, {}",
+            in(reg) value,
+        )
+    }
 }

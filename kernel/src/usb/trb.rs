@@ -9,7 +9,7 @@ use crate::usb::controller::{ConfigPhase, XhcController};
 use crate::usb::device::{DEVICES_MEM, XhciDevice};
 use crate::{make_error, error::Code};
 
-trait TRBtrait {
+pub trait TRBtrait {
     const TY: u32;
 }
 

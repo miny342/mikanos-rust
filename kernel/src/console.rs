@@ -1,8 +1,5 @@
 use core::fmt::{self, Write};
-use core::intrinsics::copy;
-use core::mem::MaybeUninit;
 
-use core::sync::atomic::{AtomicBool, Ordering};
 use alloc::sync::Arc;
 use conquer_once::spin::OnceCell;
 use spin::{MutexGuard, Mutex};
@@ -38,9 +35,9 @@ pub struct Console {
     cursor_row: usize,
     cursor_col: usize,
     color: PixelColor,
-    bg: PixelColor,
+    _bg: PixelColor,
     window: Arc<Mutex<Window>>,
-    window_id: usize,
+    _window_id: usize,
 }
 
 static CONSOLE: OnceCell<Mutex<Console>> = OnceCell::uninit();
@@ -54,9 +51,9 @@ impl Console {
             cursor_row: 0,
             cursor_col: 0,
             color,
-            bg,
+            _bg: bg,
             window,
-            window_id: id,
+            _window_id: id,
         })).unwrap();
         id
     }

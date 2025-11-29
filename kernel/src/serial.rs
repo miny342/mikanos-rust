@@ -6,39 +6,45 @@ use spin::Mutex;
 const PORT: u16 = 0x3f8;
 
 unsafe fn outb(port: u16, value: u8) {
-    asm!(
-        "out dx, al",
-        in("dx") port,
-        in("al") value,
-    )
+    unsafe {
+        asm!(
+            "out dx, al",
+            in("dx") port,
+            in("al") value,
+        )
+    }
 }
 
 unsafe fn inb(port: u16) -> u8 {
     let res: u8;
-    asm!(
-        "in al, dx",
-        in("dx") port,
-        out("al") res,
-    );
+    unsafe {
+        asm!(
+            "in al, dx",
+            in("dx") port,
+            out("al") res,
+        );
+    }
     res
 }
 
 pub unsafe fn init_serial() -> bool {
-    outb(PORT + 1, 0x00);
-    outb(PORT + 3, 0x80);
-    outb(PORT + 0, 0x03);
-    outb(PORT + 1, 0x00);
-    outb(PORT + 3, 0x03);
-    outb(PORT + 2, 0xC7);
-    outb(PORT + 4, 0x0B);
-    outb(PORT + 4, 0x1E);
-    outb(PORT + 0, 0xAE);
+    unsafe {
+        outb(PORT + 1, 0x00);
+        outb(PORT + 3, 0x80);
+        outb(PORT + 0, 0x03);
+        outb(PORT + 1, 0x00);
+        outb(PORT + 3, 0x03);
+        outb(PORT + 2, 0xC7);
+        outb(PORT + 4, 0x0B);
+        outb(PORT + 4, 0x1E);
+        outb(PORT + 0, 0xAE);
 
-    if inb(PORT + 0) != 0xAE {
-        return false
+        if inb(PORT + 0) != 0xAE {
+            return false
+        }
+
+        outb(PORT + 4, 0x0f);
     }
-
-    outb(PORT + 4, 0x0f);
     IS_USABLE.store(true, core::sync::atomic::Ordering::Relaxed);
     return true
 }

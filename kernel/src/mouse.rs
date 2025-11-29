@@ -1,10 +1,10 @@
 use alloc::sync::Arc;
 use conquer_once::spin::OnceCell;
-use spin::{MutexGuard, Mutex};
+use spin::Mutex;
 
 use crate::{graphics::{
     PixelColor,
-}, window::{Window, WindowManager}, timer::{lapic_timer_elapsed, stop_lapic_timer, start_lapic_timer}, println, serial_println};
+}, window::{Window, WindowManager}};
 
 const MOUSE_CURSOR: [[u8; 3]; 14] = [
     [64, 0, 0],
@@ -30,7 +30,7 @@ pub struct MouseCursor {
     pos_y: usize,
     screen_x: usize,
     screen_y: usize,
-    erase_color: PixelColor,
+    _erase_color: PixelColor,
     window: Arc<Mutex<Window>>,
     window_id: usize
 }
@@ -44,7 +44,7 @@ impl MouseCursor {
                 pos_y: 0,
                 screen_x,
                 screen_y,
-                erase_color: PixelColor { r: 0, g: 0, b: 0, a: 0 },
+                _erase_color: PixelColor { r: 0, g: 0, b: 0, a: 0 },
                 window: w,
                 window_id: id,
             }
@@ -106,7 +106,7 @@ impl MouseCursor {
     // }
 }
 
-pub fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
+pub fn mouse_handler(_modifire: u8, move_x: i8, move_y: i8) {
     let mut mouse = CURSOR.get().unwrap().lock();
     let mut x = (mouse.pos_x as isize) + (move_x as isize);
     let mut y = (mouse.pos_y as isize) + (move_y as isize);

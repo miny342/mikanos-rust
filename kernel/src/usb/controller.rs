@@ -8,7 +8,6 @@ use log::{debug, error};
 
 use crate::allocator::SimplestAllocator;
 use crate::{make_error, error::Code};
-use crate::error::*;
 
 use crate::usb::trb::{
     TRB,
@@ -53,7 +52,7 @@ pub struct XhcController {
     dcbaa: &'static mut DeviceContextBaseAddressArray,
     pub command_ring: MemPoolCrTRB,
     event_ring: MemPoolErTRB,
-    erste: &'static mut MemPoolERSTE,
+    _erste: &'static mut MemPoolERSTE,
     allocator: SimplestAllocator,
     center: usize,
 }
@@ -64,11 +63,12 @@ impl XhcController {
         let head = mem as *mut [u8] as *mut u8 as usize;
         let end = head + 1024 * 1024 * 4;
         let allocator = SimplestAllocator::empty();
-        allocator.init(head as *mut u8, end as *mut u8);
+        unsafe {
+            allocator.init(head as *mut u8, end as *mut u8);
+        }
 
 
-
-        let cap_reg = &*(mmio_base as *const registers::CapabilityRegisters);
+        let cap_reg = unsafe { &*(mmio_base as *const registers::CapabilityRegisters) }; 
         debug!("cap reg: {}", cap_reg.length());
 
         // if cap_reg.hcc_params1.read() & 0b100 != 0 {
@@ -78,28 +78,30 @@ impl XhcController {
         let ptr = mmio_base + (cap_reg.hcc_params1.read() >> 16 << 2) as u64;
         let ptr = ptr as *mut u32;
         let mut val = ptr;
-        loop {
-            if *val & 0xff == 1 {
-                debug!("bios to os: {:x}", *val);
-                if *val >> 16 & 1 != 0 {
-                    // let v = (val as u64 + 3) as *mut u8;
-                    // debug!("bios to os: {:x}, {:x}", *val, *v);
-                    *val |= 1 << 24;
-                    while *val >> 16 & 1 == 1 {}
-                    debug!("success")
+        unsafe { 
+            loop {
+                if *val & 0xff == 1 {
+                    debug!("bios to os: {:x}", *val);
+                    if *val >> 16 & 1 != 0 {
+                        // let v = (val as u64 + 3) as *mut u8;
+                        // debug!("bios to os: {:x}, {:x}", *val, *v);
+                        *val |= 1 << 24;
+                        while *val >> 16 & 1 == 1 {}
+                        debug!("success")
+                    }
+                    val = val.add(1);
+                    let mut v = *val;
+                    v &= (0x7 << 1) + (0xff << 5) + (0x7 << 17);
+                    v |= 0x7 << 29;
+                    *val = v;
+                    break;
                 }
-                val = val.add(1);
-                let mut v = *val;
-                v &= (0x7 << 1) + (0xff << 5) + (0x7 << 17);
-                v |= 0x7 << 29;
-                *val = v;
-                break;
-            }
-            let next = (*val >> 8) & 0xff;
-            if next == 0 {
-                break
-            } else {
-                val = ((val as usize) + ((next as usize) << 2)) as *mut u32
+                let next = (*val >> 8) & 0xff;
+                if next == 0 {
+                    break
+                } else {
+                    val = ((val as usize) + ((next as usize) << 2)) as *mut u32
+                }
             }
         }
 
@@ -138,46 +140,52 @@ impl XhcController {
 
         let dcbaap = cap_reg.dcbaap();
         let ptr = allocator.alloc_with_boundary_zeroed(Layout::new::<DeviceContextBaseAddressArray>(), pagesize);
-        let dcbaap_ptr = &mut *(ptr as *mut DeviceContextBaseAddressArray); // DCBAA.lock().x.as_ptr() as u64;
+        let dcbaap_ptr = unsafe { &mut *(ptr as *mut DeviceContextBaseAddressArray) }; // DCBAA.lock().x.as_ptr() as u64;
         dcbaap.set_dcbaap(ptr as u64);
 
         if max_scratchpad_buffers > 0 {
             let arr = allocator.alloc_with_boundary_zeroed(Layout::from_size_align(max_scratchpad_buffers * 8, 64).unwrap(), pagesize) as *mut u64;
             for i in 0..max_scratchpad_buffers {
-                arr.add(i).write(
-                    allocator.alloc_with_boundary_zeroed(Layout::from_size_align(pagesize, pagesize).unwrap(), 0) as usize as u64
-                );
+                unsafe {
+                    arr.add(i).write(
+                        allocator.alloc_with_boundary_zeroed(Layout::from_size_align(pagesize, pagesize).unwrap(), 0) as usize as u64
+                    );
+                }
             }
             dcbaap_ptr.0[0] = arr as usize as u64;
         }
 
         let crcr = cap_reg.crcr();
         let ptr = allocator.alloc_with_boundary_zeroed(Layout::new::<TRBTable>(), 65536); // CR_BUF.lock().x.as_ptr() as u64;
-        let cr_ptr = &mut *(ptr as *mut TRBTable);
+        let cr_ptr = unsafe { &mut *(ptr as *mut TRBTable) };
         assert!(ptr as u64 & 0x3f == 0);
-        crcr.set_value(ptr as u64 | 1);
+        unsafe {
+            crcr.set_value(ptr as u64 | 1);
+        }
         // crcr.set_pointer(ptr);
         // crcr.set_ring_cycle_state(true);
 
         let ptr = allocator.alloc_with_boundary_zeroed(Layout::new::<TRBTable>(), 65536); // ER_BUF.lock().x.as_ptr() as u64;
-        let er_ptr = &mut *(ptr as *mut TRBTable);
+        let er_ptr = unsafe { &mut *(ptr as *mut TRBTable) };
         assert!(ptr as u64 & 0x3f == 0);
         let erste_ptr = allocator.alloc_with_boundary_zeroed(Layout::new::<MemPoolERSTE>(), 0);
-        let mut erste_lock = &mut *(erste_ptr as *mut MemPoolERSTE); // ERSTE_BUF.lock();
+        let erste_lock = unsafe { &mut *(erste_ptr as *mut MemPoolERSTE) }; // ERSTE_BUF.lock();
         erste_lock.x[0].addr = ptr as u64;
         erste_lock.x[0].size = TRB_BUF_LEN as u16;
 
-        let runtime = cap_reg.runtime();
-        let interrupt_regs = runtime.interrupt_set();
-        interrupt_regs[0].event_ring_segment_table_size.write(1);
-        interrupt_regs[0].event_ring_dequeue_pointer.write(ptr as u64);
-        let ptr = erste_lock.x.as_ptr() as u64;
-        assert!(ptr & 0x3f == 0);
-        interrupt_regs[0].event_ring_segment_table_base_addr.write(ptr);
-        interrupt_regs[0].moderation.write(4000);
-        interrupt_regs[0].management.write(0x3);
-        usbcmd.set_interrupt_enable(true);
-        let mut port_config_phase = [ConfigPhase::NotConnected; 256];
+        unsafe {
+            let runtime = cap_reg.runtime();
+            let interrupt_regs = runtime.interrupt_set();
+            interrupt_regs[0].event_ring_segment_table_size.write(1);
+            interrupt_regs[0].event_ring_dequeue_pointer.write(ptr as u64);
+            let ptr = erste_lock.x.as_ptr() as u64;
+            assert!(ptr & 0x3f == 0);
+            interrupt_regs[0].event_ring_segment_table_base_addr.write(ptr);
+            interrupt_regs[0].moderation.write(4000);
+            interrupt_regs[0].management.write(0x3);
+            usbcmd.set_interrupt_enable(true);
+        }
+        let port_config_phase = [ConfigPhase::NotConnected; 256];
         // port_config_phase[16] = ConfigPhase::Broken;
 
         XhcController {
@@ -189,7 +197,7 @@ impl XhcController {
             dcbaa: dcbaap_ptr,
             command_ring: MemPoolCrTRB { x: cr_ptr, index: 0, cycle: true },
             event_ring: MemPoolErTRB { x: er_ptr, index: 0, cycle: true },
-            erste: erste_lock,
+            _erste: erste_lock,
             allocator,
             center: head,
         }
@@ -269,7 +277,7 @@ impl XhcController {
         *lock = Some(XhciDevice {
             device_ctx,
             input_ctx,
-            slot_id,
+            _slot_id: slot_id,
             buf: [0; 512],
             doorbell: &mut self.capability.doorbell()[slot_id as usize] as *mut registers::DoorbellRegister as u64,
             num_configuration: 0,

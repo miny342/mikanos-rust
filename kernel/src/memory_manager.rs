@@ -12,7 +12,7 @@ pub const BYTES_PER_FRAME: usize = 4 * KIB;
 pub struct FrameID(pub usize);
 
 impl FrameID {
-    const fn frame(&self) -> usize {
+    const fn _frame(&self) -> usize {
         self.0 * BYTES_PER_FRAME
     }
     fn add(&self, idx: usize) -> Self {
