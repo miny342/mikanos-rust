@@ -13,7 +13,6 @@ use alloc::boxed::Box;
 use alloc::format;
 use futures_util::StreamExt;
 use futures_util::task::AtomicWaker;
-use kernel::serial_println;
 use log::{debug, info, error};
 
 use common::writer_config::FrameBufferConfig;
@@ -23,12 +22,10 @@ use uefi::mem::memory_map::MemoryMap;
 use kernel::graphics::*;
 use kernel::console::*;
 use kernel::interrupt::disable_interrupt;
-use kernel::logger::*;
 use kernel::memory_manager::{
     FrameID,
     BYTES_PER_FRAME, MANAGER
 };
-use kernel::serial::init_serial;
 use kernel::timer::initialize_apic_timer;
 use kernel::window::WindowManager;
 use kernel::pci;
@@ -99,7 +96,7 @@ impl futures_util::Stream for Tmp2Task {
 async fn tmp_task() {
     let mut task = Box::new(Tmp2Task { state: true});
     while task.next().await.is_some() {
-        debug!("tmp task running");
+        // debug!("tmp task running");
     }
 }
 
@@ -124,7 +121,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     let framebufferconfig = unsafe { *config };
 
     kernel::logger::init_serial_and_logger();
-    log::set_max_level(log::LevelFilter::Trace);
+    log::set_max_level(log::LevelFilter::Info);
     unsafe {
         kernel::segment::setup_segments();
         kernel::segment::set_ds_all(0);
