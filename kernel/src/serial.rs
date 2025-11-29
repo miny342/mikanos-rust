@@ -27,7 +27,10 @@ unsafe fn inb(port: u16) -> u8 {
     res
 }
 
-pub unsafe fn init_serial() -> bool {
+pub fn init_serial() -> bool {
+    if IS_USABLE.load(core::sync::atomic::Ordering::Relaxed) {
+        return true;
+    }
     unsafe {
         outb(PORT + 1, 0x00);
         outb(PORT + 3, 0x80);
@@ -49,12 +52,12 @@ pub unsafe fn init_serial() -> bool {
     return true
 }
 
-fn is_transmit_empty() -> u8 {
+unsafe fn is_transmit_empty() -> u8 {
     unsafe { inb(PORT + 5) & 0x20 }
 }
 
-pub fn write_serial(value: u8) {
-    while is_transmit_empty() == 0 {}
+unsafe fn write_serial(value: u8) {
+    while unsafe { is_transmit_empty() } == 0 {}
 
     unsafe { outb(PORT, value) }
 }
@@ -64,7 +67,7 @@ struct Serial;
 impl core::fmt::Write for Serial {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         for c in s.as_bytes() {
-            write_serial(*c)
+            unsafe { write_serial(*c) }
         }
         Ok(())
     }

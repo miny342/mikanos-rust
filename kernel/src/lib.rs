@@ -33,15 +33,13 @@ extern crate alloc;
 #[global_allocator]
 pub static ALLOCATOR: allocator::SimplestAllocator = allocator::SimplestAllocator::empty();
 
-pub static LOGGER: logger::Logger = logger::Logger;
-
 pub trait Testable {
     fn run(&self);
 }
 
 impl<T> Testable for T where T: Fn() {
     fn run(&self) {
-        serial_print!("{}...\t", core::any::type_name::<Self>());
+        serial_print!("{}...\n", core::any::type_name::<Self>());
         self();
         serial_println!("[ok]");
     }

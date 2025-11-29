@@ -17,9 +17,17 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 extern "sysv64" fn before_test(_config: *const common::writer_config::FrameBufferConfig, _memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
+    kernel::logger::init_serial_and_logger();
     test_main();
     exit_qemu(QemuExitCode::Failed);
 }
 
 #[test_case]
-fn boot_success() {}
+fn test_logger() {
+    log::set_max_level(log::LevelFilter::Warn);
+    log::error!("This should appear.");
+    log::warn!("This should appear. info and below should not.");
+    log::info!("This should not appear.");
+    log::debug!("This should not appear.");
+    log::trace!("This should not appear.");
+}

@@ -1,60 +1,12 @@
-use core::sync::atomic::AtomicBool;
+use log::{Record, Metadata};
 
-
-// #[derive(Debug, Clone, Copy)]
-// pub enum LogLevel {
-//     Error = 3,
-//     Warn = 4,
-//     Info = 6,
-//     Debug = 7
-// }
-
-// impl LogLevel {
-//     pub const fn to_num(&self) -> usize {
-//         *self as usize
-//     }
-// }
-
-// pub static LOG_LEVEL: AtomicUsize = AtomicUsize::new(LogLevel::Warn.to_num());
-pub static SERIAL_USABLE: AtomicBool = AtomicBool::new(false);
-
-// pub fn set_log_level(level: LogLevel) {
-//     LOG_LEVEL.store(level.to_num(), Ordering::Relaxed)
-// }
-
-// #[macro_export]
 macro_rules! __log {
     ($($arg:tt)*) => {
-        if $crate::logger::SERIAL_USABLE.load(core::sync::atomic::Ordering::Relaxed) {
-                $crate::serial_println!($($arg)*)
-        }
-        // 常に画面に出したほうが楽しい
+        $crate::serial_println!($($arg)*);
+        // 常に画面に出したほうが楽しいし、バグも見つかる(画面に表示する際に無限再帰するとか)
         $crate::println!($($arg)*)
     }
 }
-
-// #[macro_export]
-// macro_rules! debug {
-//     ($fmt:expr) => ($crate::log!($crate::logger::LogLevel::Debug, concat!("Debug: ", $fmt)));
-//     ($fmt:expr, $($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Debug, concat!("Debug: ", $fmt), $($arg)*));
-// }
-// #[macro_export]
-// macro_rules! info {
-//     ($fmt:expr) => ($crate::log!($crate::logger::LogLevel::Info, concat!("Info: ", $fmt)));
-//     ($fmt:expr, $($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Info, concat!("Info: ", $fmt), $($arg)*));
-// }
-// #[macro_export]
-// macro_rules! warn {
-//     ($fmt:expr) => ($crate::log!($crate::logger::LogLevel::Warn, concat!("Warn: ", $fmt)));
-//     ($fmt:expr, $($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Warn, concat!("Warn: ", $fmt), $($arg)*));
-// }
-// #[macro_export]
-// macro_rules! error {
-//     ($fmt:expr) => ($crate::log!($crate::logger::LogLevel::Error, concat!("Error: ", $fmt)));
-//     ($fmt:expr, $($arg:tt)*) => ($crate::log!($crate::logger::LogLevel::Error, concat!("Error: ", $fmt), $($arg)*));
-// }
-
-use log::{Record, Metadata};
 
 pub struct Logger;
 
@@ -76,3 +28,14 @@ impl log::Log for Logger {
     }
     fn flush(&self) {}
 }
+
+static LOGGER: Logger = Logger;
+
+pub fn init_serial_and_logger() {
+    crate::serial::init_serial();
+    log::set_logger(&LOGGER).unwrap_or_else(|_| {
+        crate::serial_println!("Failed to set logger");
+        panic!();
+    });
+}
+

@@ -13,6 +13,7 @@ use alloc::boxed::Box;
 use alloc::format;
 use futures_util::StreamExt;
 use futures_util::task::AtomicWaker;
+use kernel::serial_println;
 use log::{debug, info, error};
 
 use common::writer_config::FrameBufferConfig;
@@ -122,8 +123,8 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     unsafe { disable_interrupt() };
     let framebufferconfig = unsafe { *config };
 
-    SERIAL_USABLE.store(unsafe { init_serial() }, core::sync::atomic::Ordering::Relaxed);
-    log::set_logger(&kernel::LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
+    kernel::logger::init_serial_and_logger();
+    log::set_max_level(log::LevelFilter::Trace);
     unsafe {
         kernel::segment::setup_segments();
         kernel::segment::set_ds_all(0);
