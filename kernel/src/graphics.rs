@@ -170,7 +170,9 @@ impl FrameBuffer {
                 bytes_per_pixel * self.pixels_per_scan_line * value
             )
         }
-
+    }
+    pub fn area(&self, pos: Vector2D<isize>) -> Rectangle {
+        Rectangle::new(pos, Vector2D::new(self.horizontal_resolution as isize, self.vertical_resolution as isize))
     }
 }
 

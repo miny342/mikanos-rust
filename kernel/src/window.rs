@@ -149,13 +149,22 @@ static WINDOW_MANAGER: OnceCell<Mutex<WindowManager>> = OnceCell::uninit();
 
 pub struct WindowManager {
     screen_buffer: FrameBuffer,
+    back_buffer: FrameBuffer,
     windows: Vec<Arc<Mutex<Window>>>,
     stack: Vec<Arc<Mutex<Window>>>,
 }
 
 impl WindowManager {
     pub fn new(screen: FrameBuffer) {
-        WINDOW_MANAGER.try_init_once(|| Mutex::new(WindowManager { screen_buffer: screen, windows: Vec::new(), stack: Vec::new() })).expect("already init");
+        let back_buffer_config = FrameBufferConfig {
+            frame_buffer: null_mut(),
+            pixels_per_scan_line: screen.horizontal_resolution(),
+            horizontal_resolution: screen.horizontal_resolution(),
+            vertical_resolution: screen.vertical_resolution(),
+            pixel_format: screen.fmt(),
+        };
+        let back_buffer = unsafe { FrameBuffer::new(back_buffer_config) };
+        WINDOW_MANAGER.try_init_once(|| Mutex::new(WindowManager { screen_buffer: screen, back_buffer, windows: Vec::new(), stack: Vec::new() })).expect("already init");
     }
     pub fn new_window(width: usize, height: usize, use_alpha: bool, pos_x: isize, pos_y: isize) -> (usize, Arc<Mutex<Window>>) {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
@@ -178,16 +187,23 @@ impl WindowManager {
     }
     pub fn draw() {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
+        // mgrを可変参照でとった後に不変参照にできないためこうする
+        // stackとscreenは独立して動き、その間mgrはロックされているのでアクセスされることはない
+        let back_buffer = unsafe  { &mut *&raw mut mgr.back_buffer };
         let screen = unsafe { &mut *(&mut mgr.screen_buffer as *mut FrameBuffer) };
-        mgr.stack.iter().map(|v| v.lock().draw_to(screen)).for_each(drop);
+        mgr.stack.iter().map(|v| v.lock().draw_to(back_buffer)).for_each(drop);
+        screen.copy(0, 0, &back_buffer);
     }
     pub fn draw_rect_area(r: &Rectangle) {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
+        let back_buffer = unsafe  { &mut *&raw mut mgr.back_buffer };
         let screen = unsafe { &mut *(&mut mgr.screen_buffer as *mut FrameBuffer) };
-        mgr.stack.iter().map(|v| v.lock().draw_rect_area_to(screen, r)).for_each(drop);
+        mgr.stack.iter().map(|v| v.lock().draw_rect_area_to(back_buffer, r)).for_each(drop);
+        screen.copy_area(&back_buffer.area(Vector2D::new(0,0)), &back_buffer, r);
     }
     pub fn draw_window(id: usize) {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
+        let back_buffer = unsafe  { &mut *&raw mut mgr.back_buffer };
         let screen = unsafe { &mut *(&mut mgr.screen_buffer as *mut FrameBuffer) };
         let mut rect = None;
         for window in mgr.stack.iter() {
@@ -196,8 +212,11 @@ impl WindowManager {
                 rect = Some(w.area.clone());
             }
             if let Some(ref r) = rect {
-                w.draw_rect_area_to(screen, r);
+                w.draw_rect_area_to(back_buffer, r);
             }
+        }
+        if let Some(ref r) = rect {
+            screen.copy_area(&back_buffer.area(Vector2D::new(0,0)), &back_buffer, r);
         }
     }
     pub fn hide(id: usize) {
