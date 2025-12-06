@@ -6,6 +6,8 @@ use spin::Mutex;
 
 use log::debug;
 
+use crate::memory_manager::BYTES_PER_FRAME;
+
 #[derive(Debug)]
 pub struct List {
     pub size: usize,
@@ -195,4 +197,15 @@ unsafe impl GlobalAlloc for SimplestAllocator {
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
 
     }
+}
+
+#[global_allocator]
+static ALLOCATOR: SimplestAllocator = SimplestAllocator::empty();
+
+pub unsafe fn init_allocator() {
+    let heap_frame = 64 * 512;
+    let heap_start = crate::memory_manager::page_allocate(heap_frame).expect("cannot initialize heap allocate");
+    let start = heap_start.frame();
+    let end = start + heap_frame * BYTES_PER_FRAME;
+    unsafe { ALLOCATOR.init(start as *mut u8, end as *mut u8) };
 }

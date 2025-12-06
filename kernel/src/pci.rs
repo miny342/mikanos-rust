@@ -1,18 +1,54 @@
 use core::arch::asm;
-use heapless::Vec;
+use alloc::vec::Vec;
 use spin::Mutex;
 use crate::error::*;
 use crate::make_error;
+use crate::io_port::{ind, outd};
 
 const CONFIG_ADDR: u16 = 0x0cf8;
 const CONFIG_DATA: u16 = 0x0cfc;
 
+#[derive(Debug)]
 pub struct Device {
-    pub bus: u8,
-    pub device: u8,
-    pub func: u8,
-    pub header_type: u8,
-    pub class_code: ClassCode,
+    bus: u8,
+    device: u8,
+    func: u8,
+    header_type: u8,
+    class_code: ClassCode,
+}
+
+impl Device {
+    unsafe fn new(bus: u8, device: u8, func: u8, header_type: u8, class_code: ClassCode) -> Self {
+        Device { bus, device, func, header_type, class_code }
+    }
+    pub fn read_vendor_id(&self) -> u16 {
+        unsafe { read_vendor_id(self.bus, self.device, self.func) }
+    }
+    pub fn bus(&self) -> u8 {
+        self.bus
+    }
+    pub fn device(&self) -> u8 {
+        self.device
+    }
+    pub fn func(&self) -> u8 {
+        self.func
+    }
+    pub fn header_type(&self) -> u8 {
+        self.header_type
+    }
+    pub fn class_code(&self) -> ClassCode {
+        self.class_code
+    }
+    pub unsafe fn read_config_reg(&self, reg_addr: u8) -> u32 {
+        unsafe {
+            read_config_reg(self, reg_addr)
+        }
+    }
+    pub unsafe fn write_config_reg(&self, reg_addr: u8, value: u32) {
+        unsafe {
+            write_config_reg(self, reg_addr, value);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -34,8 +70,6 @@ impl ClassCode {
     }
 }
 
-pub static DEVICES: Mutex<Vec<Device, 32>> = Mutex::new(Vec::new());
-
 fn make_address(bus: u8, device: u8, func: u8, reg_addr: u8) -> u32 {
     let shl = |x: u32, bits: u32| {
         x << bits
@@ -47,33 +81,34 @@ fn make_address(bus: u8, device: u8, func: u8, reg_addr: u8) -> u32 {
         | (reg_addr as u32 & 0xfc);
 }
 
-fn add_device(bus: u8, device: u8, func: u8, header_type: u8, class_code: ClassCode) -> Result<(), Error> {
-    let mut dev = DEVICES.lock();
-    let res = dev.push(Device {bus, device, func, header_type, class_code});
-    match res {
-        Ok(_) => Ok(()),
+unsafe fn add_device(v: &mut Vec<Device>, bus: u8, device: u8, func: u8, header_type: u8, class_code: ClassCode) -> Result<(), Error> {
+    match v.try_reserve(1) {
+        Ok(_) => {
+            v.push(unsafe { Device::new(bus, device, func, header_type, class_code) });
+            Ok(())
+        },
         Err(_) => Err(make_error!(Code::Full)),
     }
 }
 
-unsafe fn scan_func(bus: u8, device: u8, func: u8) -> Result<(), Error> {
+unsafe fn scan_func(v: &mut Vec<Device>, bus: u8, device: u8, func: u8) -> Result<(), Error> {
     unsafe {
         let class_code = read_class_code(bus, device, func);
         let header_type = read_header_type(bus, device, func);
-        add_device(bus, device, func, header_type, class_code)?;
+        add_device(v, bus, device, func, header_type, class_code)?;
 
         if class_code.match2(0x06, 0x04) {
             let bus_numbers = read_bus_numbers(bus, device, func);
             let secondary_bus = ((bus_numbers >> 8) & 0xff) as u8;
-            return scan_bus(secondary_bus);
+            return scan_bus(v, secondary_bus);
         }
     }
     Ok(())
 }
 
-unsafe fn scan_device(bus: u8, device: u8) -> Result<(), Error> {
+unsafe fn scan_device(v: &mut Vec<Device>, bus: u8, device: u8) -> Result<(), Error> {
     unsafe {
-        scan_func(bus, device, 0)?;
+        scan_func(v, bus, device, 0)?;
 
         if is_single_function_device(read_header_type(bus, device, 0)) {
             return Ok(())
@@ -83,19 +118,19 @@ unsafe fn scan_device(bus: u8, device: u8) -> Result<(), Error> {
             if read_vendor_id(bus, device, func) == 0xffff {
                 continue;
             }
-            scan_func(bus, device, func)?;
+            scan_func(v, bus, device, func)?;
         }
     }
     Ok(())
 }
 
-unsafe fn scan_bus(bus: u8) -> Result<(), Error> {
+unsafe fn scan_bus(v: &mut Vec<Device>, bus: u8) -> Result<(), Error> {
     unsafe {
         for device in 0u8..32 {
             if read_vendor_id(bus, device, 0) == 0xffff {
                 continue;
             }
-            scan_device(bus, device)?;
+            scan_device(v, bus, device)?;
         }
     }
     Ok(())
@@ -103,35 +138,15 @@ unsafe fn scan_bus(bus: u8) -> Result<(), Error> {
 
 
 pub unsafe fn write_address(addr: u32) {
-    unsafe {
-        asm!(
-            "out dx, eax",
-            in("dx") CONFIG_ADDR,
-            in("eax") addr,
-        )
-    }
+    unsafe { outd(CONFIG_ADDR, addr) };
 }
 
 pub unsafe fn write_data(value: u32) {
-    unsafe {
-        asm!(
-            "out dx, eax",
-            in("dx") CONFIG_DATA,
-            in("eax") value,
-        )
-    }
+    unsafe { outd(CONFIG_DATA, value) };
 }
 
 pub unsafe fn read_data() -> u32 {
-    unsafe {
-        let ret: u32;
-        asm!(
-            "in eax, dx",
-            in("dx") CONFIG_DATA,
-            out("eax") ret,
-        );
-        ret
-    }
+    unsafe { ind(CONFIG_DATA) }
 }
 
 pub unsafe fn read_vendor_id(bus: u8, device: u8, func: u8) -> u16 {
@@ -178,20 +193,26 @@ pub fn is_single_function_device(header_type: u8) -> bool {
     (header_type & 0x80) == 0
 }
 
-pub fn scan_all_bus() -> Result<(), Error> {
+pub fn scan_all_bus() -> Result<Vec<Device>, (Vec<Device>, Error)> {
+    let mut v = Vec::new();
     unsafe {
         let header_type = read_header_type(0, 0, 0);
         if is_single_function_device(header_type) {
-            return scan_bus(0);
+            if let Some(e) = scan_bus(&mut v, 0).err() {
+                return Err((v, e))
+            }
+            return Ok(v)
         }
 
         for func in 0u8..8 {
             if read_vendor_id(0, 0, func) == 0xffff {
                 continue;
             }
-            scan_bus(func)?;
+            if let Some(e) = scan_bus(&mut v, func).err() {
+                return Err((v, e))
+            }
         }
-        Ok(())
+        Ok(v)
     }
 }
 

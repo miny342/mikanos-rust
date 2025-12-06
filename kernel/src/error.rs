@@ -31,6 +31,7 @@ pub enum Code {
     InvalidPhase,
     UnknownXHCISpeedID,
     NoWaiter,
+    NotFound,
 }
 
 #[derive(Debug)]

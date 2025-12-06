@@ -54,7 +54,25 @@ pub struct FrameBuffer {
 }
 
 impl FrameBuffer {
-    pub unsafe fn new(config: FrameBufferConfig) -> Self {
+    pub fn new(config: FrameBufferConfig) -> Self {
+        let per_pixel = bits_per_pixel(config.pixel_format).unwrap();
+        let len = ((per_pixel + 7) / 8) * config.horizontal_resolution * config.vertical_resolution;
+        let (from_vec, buffer) = (true, m_vec![0u8; len].leak());
+        FrameBuffer {
+            frame_buffer: buffer,
+            pixels_per_scan_line: config.pixels_per_scan_line,
+            horizontal_resolution: config.horizontal_resolution,
+            vertical_resolution: config.vertical_resolution,
+            pixel_format: config.pixel_format,
+            from_vec,
+            write_: match config.pixel_format {
+                PixelFormat::Rgb => write_rgb_,
+                PixelFormat::Bgr => write_bgr_,
+                _ => panic!()
+            }
+        }
+    }
+    pub unsafe fn new_in(config: FrameBufferConfig) -> Self {
         let per_pixel = bits_per_pixel(config.pixel_format).unwrap();
         let len = ((per_pixel + 7) / 8) * config.horizontal_resolution * config.vertical_resolution;
         let (from_vec, buffer) = if config.frame_buffer.is_null() {

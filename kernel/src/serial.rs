@@ -1,31 +1,9 @@
 use core::{arch::asm, fmt::Write, sync::atomic::AtomicBool};
 
 use spin::Mutex;
-
+use crate::io_port::{inb, outb};
 
 const PORT: u16 = 0x3f8;
-
-unsafe fn outb(port: u16, value: u8) {
-    unsafe {
-        asm!(
-            "out dx, al",
-            in("dx") port,
-            in("al") value,
-        )
-    }
-}
-
-unsafe fn inb(port: u16) -> u8 {
-    let res: u8;
-    unsafe {
-        asm!(
-            "in al, dx",
-            in("dx") port,
-            out("al") res,
-        );
-    }
-    res
-}
 
 pub fn init_serial() -> bool {
     if IS_USABLE.load(core::sync::atomic::Ordering::Relaxed) {

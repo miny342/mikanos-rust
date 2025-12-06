@@ -1,4 +1,5 @@
 use spin::Mutex;
+use uefi::{boot::PAGE_SIZE, mem::memory_map::MemoryMap};
 
 use crate::make_error;
 
@@ -9,10 +10,10 @@ const GIB: usize = 1024 * MIB;
 pub const BYTES_PER_FRAME: usize = 4 * KIB;
 
 #[derive(Debug, Clone, Copy)]
-pub struct FrameID(pub usize);
+pub struct FrameID(usize);
 
 impl FrameID {
-    const fn _frame(&self) -> usize {
+    pub const fn frame(&self) -> usize {
         self.0 * BYTES_PER_FRAME
     }
     fn add(&self, idx: usize) -> Self {
@@ -94,4 +95,36 @@ impl BitmapMemoryManager {
         }
         return Ok(())
     }
+}
+
+pub unsafe fn init_memory_manager(memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) {
+    let memmap = unsafe { &*memmap_ptr };
+    let mut memory_manager = MANAGER.lock();
+    let mut available_end: usize = 0;
+    for desc in memmap.entries() {
+        let phys_start = desc.phys_start as usize;
+        let page_count = desc.page_count as usize;
+        if available_end < phys_start {
+            memory_manager.mark_allocated(
+                &FrameID(available_end / BYTES_PER_FRAME),
+                (phys_start - available_end) / BYTES_PER_FRAME,
+            )
+        }
+        let physical_end = phys_start + page_count * PAGE_SIZE;
+        if desc.ty == uefi::mem::memory_map::MemoryType::CONVENTIONAL ||
+           desc.ty == uefi::mem::memory_map::MemoryType::BOOT_SERVICES_CODE ||
+           desc.ty == uefi::mem::memory_map::MemoryType::BOOT_SERVICES_DATA {
+            available_end = physical_end;
+        } else {
+            memory_manager.mark_allocated(
+                &FrameID(phys_start / BYTES_PER_FRAME),
+                page_count * PAGE_SIZE / BYTES_PER_FRAME
+            )
+        }
+    }
+    memory_manager.set_memory_range(&FrameID(1), &FrameID(available_end / BYTES_PER_FRAME));
+}
+
+pub fn page_allocate(num_frame: usize) -> Result<FrameID, crate::error::Error> {
+    MANAGER.lock().allocate(num_frame)
 }

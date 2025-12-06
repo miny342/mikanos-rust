@@ -10,7 +10,6 @@ use spin::Mutex;
 
 use crate::graphics::{PixelColor, FrameBuffer};
 use crate::math::{Rectangle, Vector2D};
-use crate::serial_println;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowID(NonZeroUsize);
@@ -171,16 +170,21 @@ pub struct WindowManager {
 }
 
 impl WindowManager {
-    pub fn new(screen: FrameBuffer) {
+    pub unsafe fn new(screen_config: FrameBufferConfig) {
         let back_buffer_config = FrameBufferConfig {
             frame_buffer: null_mut(),
-            pixels_per_scan_line: screen.horizontal_resolution(),
-            horizontal_resolution: screen.horizontal_resolution(),
-            vertical_resolution: screen.vertical_resolution(),
-            pixel_format: screen.fmt(),
+            pixels_per_scan_line: screen_config.pixels_per_scan_line,
+            horizontal_resolution: screen_config.horizontal_resolution,
+            vertical_resolution: screen_config.vertical_resolution,
+            pixel_format: screen_config.pixel_format,
         };
-        let back_buffer = unsafe { FrameBuffer::new(back_buffer_config) };
+        let screen = unsafe { FrameBuffer::new_in(screen_config) };
+        let back_buffer = FrameBuffer::new(back_buffer_config);
         WINDOW_MANAGER.try_init_once(|| Mutex::new(WindowManager { screen_buffer: screen, back_buffer, windows: Vec::new(), stack: Vec::new() })).expect("already init");
+    }
+    pub fn resolution() -> (usize, usize) {
+        let mgr = WINDOW_MANAGER.get().unwrap().lock();
+        (mgr.screen_buffer.horizontal_resolution(), mgr.screen_buffer.vertical_resolution())
     }
     pub fn new_window(width: usize, height: usize, use_alpha: bool, pos_x: isize, pos_y: isize, draggable: bool) -> (WindowID, Arc<Mutex<Window>>) {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();

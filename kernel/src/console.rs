@@ -44,7 +44,8 @@ pub struct Console {
 static CONSOLE: OnceCell<Mutex<Console>> = OnceCell::uninit();
 
 impl Console {
-    pub fn new(color: PixelColor, bg: PixelColor, width: usize, height: usize) -> WindowID {
+    pub fn new(color: PixelColor, bg: PixelColor) -> WindowID {
+        let (width, height) = WindowManager::resolution();
         let (id, window) = WindowManager::new_window(width, height, false, 0, 0, false);
         CONSOLE.try_init_once(|| Mutex::new(Console {
             row: ROW,

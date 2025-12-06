@@ -28,11 +28,9 @@ pub mod timer;
 pub mod serial;
 pub mod entry;
 pub mod math;
+pub mod io_port;
 
 extern crate alloc;
-
-#[global_allocator]
-pub static ALLOCATOR: allocator::SimplestAllocator = allocator::SimplestAllocator::empty();
 
 pub trait Testable {
     fn run(&self);

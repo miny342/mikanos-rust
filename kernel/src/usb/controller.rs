@@ -1,12 +1,14 @@
 use core::alloc::Layout;
 use core::mem::MaybeUninit;
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use futures_util::StreamExt;
 use futures_util::task::AtomicWaker;
-use log::{debug, error};
+use log::{debug, error, info};
 
 use crate::allocator::SimplestAllocator;
+use crate::pci::Device;
 use crate::{make_error, error::Code};
 
 use crate::usb::trb::{
@@ -366,4 +368,67 @@ impl Drop for XhcController {
             drop(v);
         }
     }
+}
+
+pub fn init_xhc(devices: &[Device]) -> Result<Box<XhcController>, crate::error::Error> {
+    // for dev in devices.iter() {
+    //     let vendor_id = dev.read_vendor_id();
+    //     let class_code = dev.class_code();
+    //     debug!("{}.{}.{}: vend {:>4x}, class {:?}, head {:>2x}",
+    //         dev.bus(), dev.device(), dev.func(),
+    //         vendor_id, class_code, dev.header_type()
+    //     );
+    // }
+
+    let mut dev: Option<&crate::pci::Device> = None;
+    for d in devices.iter().filter(|d| d.class_code().match3(0x0c, 0x03, 0x30)) {
+        dev = Some(d);
+        if d.read_vendor_id() == 0x8086 {
+            break;
+        }
+    }
+
+    let Some(xhc_dev) = dev else {
+        return Err(make_error!(crate::error::Code::NotFound))
+    };
+
+    unsafe {
+        let intel_ehc = devices.iter().filter(|d| d.class_code().match3(0x0c, 0x03, 0x20)).any(|d| d.read_vendor_id() == 0x8086);
+        if intel_ehc {
+            let superspeed_ports = crate::pci::read_config_reg(xhc_dev, 0xdc);
+            crate::pci::write_config_reg(xhc_dev, 0xd8, superspeed_ports);
+            let ehci2xhci_ports = crate::pci::read_config_reg(xhc_dev, 0xd4);
+            crate::pci::write_config_reg(xhc_dev, 0xd0, ehci2xhci_ports);
+            debug!("switch ehci2xhci: ss = {}, xhci = {}", superspeed_ports, ehci2xhci_ports);
+
+            let mut ports_available = crate::pci::read_config_reg(xhc_dev, 0xdc);
+            debug!("configurable ports to enable superspeed: {:x}", ports_available);
+            crate::pci::write_config_reg(xhc_dev, 0xd8, ports_available);
+            ports_available = crate::pci::read_config_reg(xhc_dev, 0xdc);
+            debug!("usb 3.0 ports that are now enabled under xhci: {:x}", ports_available);
+            ports_available = crate::pci::read_config_reg(xhc_dev, 0xd4);
+            debug!("configurable usb 2.0 ports to hand over to xhci: {:x}", ports_available);
+            crate::pci::write_config_reg(xhc_dev, 0xd0, ports_available);
+            ports_available = crate::pci::read_config_reg(xhc_dev, 0xd0);
+            debug!("usb 2.0 ports that are now switched over to xhci: {:x}", ports_available);
+        }
+    }
+
+    info!("xHC has been found: {}.{}.{}", xhc_dev.bus(), xhc_dev.device(), xhc_dev.func());
+
+    unsafe {
+        let bsp_local_apic_id = (*(0xfee00020 as *const u32) >> 24) as u8;
+        crate::pci::configure_msi_fixed_destination(xhc_dev, bsp_local_apic_id, crate::pci::MSITriggerMode::Level, crate::pci::MSIDeliveryMode::Fixed, crate::interrupt::InterruptVector::XHCI as u8, 0);
+    }
+
+    let xhc_bar = unsafe {crate::pci::read_bar(xhc_dev, 0)?};
+    debug!("read bar: Success");
+    let xhc_mmio_base = xhc_bar & !0xf;
+    debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
+
+    unsafe { Ok(Box::new(XhcController::initialize(xhc_mmio_base, keyboard_handler, crate::mouse::mouse_handler))) }
+}
+
+fn keyboard_handler(_modifire: u8, _pressing: [u8; 6]) {
+
 }

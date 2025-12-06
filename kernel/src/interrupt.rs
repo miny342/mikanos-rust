@@ -131,3 +131,9 @@ pub unsafe fn enable_and_halt_interrupt() {
         asm!("sti", "hlt");
     }
 }
+
+pub unsafe fn init_interrupt() {
+    let cs = get_cs();
+    set_idt_entry(InterruptVector::XHCI as usize, InterruptDescriptorAttr::new(DescriptorType::InterruptGate, 0, true, 0), crate::usb::controller::int_handler_xhci as *const fn() as u64, cs);
+    load_idt();
+}

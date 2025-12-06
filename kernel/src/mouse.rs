@@ -31,14 +31,13 @@ struct Modifire {
     _reserved: u8,
 }
 
-static CURSOR: OnceCell<Mutex<MouseCursor>> = OnceCell::uninit(); // Mutex::new(MouseCursor { pos_x: 0, pos_y: 0, erase_color: PixelColor { r: 0, g: 0, b: 0, a: 255 } });
+static CURSOR: OnceCell<Mutex<MouseCursor>> = OnceCell::uninit();
 
 pub struct MouseCursor {
     pos_x: usize,
     pos_y: usize,
     screen_x: usize,
     screen_y: usize,
-    _erase_color: PixelColor,
     window: Arc<Mutex<Window>>,
     window_id: WindowID,
     prev_modifire: Modifire,
@@ -46,15 +45,15 @@ pub struct MouseCursor {
 }
 
 impl MouseCursor {
-    pub fn new(screen_x: usize, screen_y: usize) -> WindowID {
+    pub fn new() -> WindowID {
         let (id, w) = WindowManager::new_window(12, 14, true, 0, 0, false);
+        let (screen_x, screen_y) = WindowManager::resolution();
         CURSOR.try_init_once(|| Mutex::new(
             MouseCursor {
                 pos_x: 0,
                 pos_y: 0,
                 screen_x,
                 screen_y,
-                _erase_color: PixelColor { r: 0, g: 0, b: 0, a: 0 },
                 window: w,
                 window_id: id,
                 prev_modifire: Modifire(0),
@@ -89,33 +88,6 @@ impl MouseCursor {
     pub fn id() -> WindowID {
         CURSOR.try_get().unwrap().lock().window_id
     }
-
-    // fn erase_mouse_cursor(&self, writer: &mut MutexGuard<PixelWriter>, pos_x: usize, pos_y: usize) {
-    //     for col in 0..14 {
-    //         for row in 0..12 {
-    //             writer.write(pos_x + row, pos_y + col, &self.erase_color)
-    //         }
-    //     }
-    // }
-    // fn move_relative(&mut self, diff_x: i8, diff_y: i8) {
-    //     let mut writer = PixelWriter::get().unwrap().lock();
-    //     let mut x = (self.pos_x as isize) + (diff_x as isize);
-    //     let mut y = (self.pos_y as isize) + (diff_y as isize);
-    //     if x < 0 {
-    //         x = 0;
-    //     } else if x >= writer.horizontal_resolution() as isize {
-    //         x = writer.horizontal_resolution() as isize - 1;
-    //     }
-    //     if y < 0 {
-    //         y = 0;
-    //     } else if y >= writer.vertical_resolution() as isize {
-    //         y = writer.vertical_resolution() as isize - 1;
-    //     }
-    //     self.erase_mouse_cursor(&mut writer, self.pos_x, self.pos_y);
-    //     self.draw_mouse_cursor(&mut writer, x as usize, y as usize);
-    //     self.pos_x = x as usize;
-    //     self.pos_y = y as usize;
-    // }
 }
 
 pub fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {

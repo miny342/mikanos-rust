@@ -114,7 +114,7 @@ unsafe fn load_gdt(offset: *mut SegmentDescriptor, limit: u16) {
     }
 }
 
-pub unsafe fn setup_segments() {
+unsafe fn setup_segments() {
     let mut segments = [SegmentDescriptor(0); 3];
     segments[0].0 = 0;
     set_code_segment(&mut segments[1], DescriptorType::ExecuteRead, 0, 0, 0xfffff);
@@ -126,7 +126,7 @@ pub unsafe fn setup_segments() {
     }
 }
 
-pub unsafe fn set_ds_all(v: u16) {
+unsafe fn set_ds_all(v: u16) {
     unsafe {
         asm!(
             "mov ds, {0:x}",
@@ -138,7 +138,7 @@ pub unsafe fn set_ds_all(v: u16) {
     }
 }
 
-pub unsafe fn set_csss(cs: u16, ss: u16) {
+unsafe fn set_csss(cs: u16, ss: u16) {
     let csu64 = cs as u64;
     unsafe {
         asm!(
@@ -155,6 +155,10 @@ pub unsafe fn set_csss(cs: u16, ss: u16) {
     }
 }
 
-// unsafe extern "C" {
-//     pub unsafe fn set_csss(cs: u16, ss: u16);
-// }
+pub unsafe fn init_segment() {
+    unsafe {
+        setup_segments();
+        set_ds_all(0);
+        set_csss(1 << 3, 2 << 3);
+    }
+}
