@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! entry {
     ($p:path) => {
-        const _: extern "sysv64" fn(*const common::writer_config::FrameBufferConfig, *const uefi::mem::memory_map::MemoryMapOwned) -> ! = 
+        const _: extern "sysv64" fn(*const common::writer_config::FrameBufferConfig, *const uefi::mem::memory_map::MemoryMapOwned) -> ! =
             $p as extern "sysv64" fn(*const common::writer_config::FrameBufferConfig, *const uefi::mem::memory_map::MemoryMapOwned) -> !;
 
         #[unsafe(naked)]
@@ -33,4 +33,3 @@ macro_rules! entry {
         }
     };
 }
-

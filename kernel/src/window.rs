@@ -103,7 +103,7 @@ impl Window {
         if (' ' as u8) <= i && i <= ('~' as u8) {
             for dy in 0..16 {
                 for dx in 0..8 {
-                    if (unsafe { f.get_unchecked(dy) } << dx) & 0x80 != 0 && 
+                    if (unsafe { f.get_unchecked(dy) } << dx) & 0x80 != 0 &&
                         x + dx < self.shadow_buffer.horizontal_resolution() &&
                         y + dy < self.shadow_buffer.vertical_resolution() {
                             self.write(x + dx, y + dy, color);

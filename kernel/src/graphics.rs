@@ -133,7 +133,7 @@ impl FrameBuffer {
 
         let Some(dst_area) = Rectangle::new(Vector2D::new(0, 0), Vector2D::new(dst_width, dst_height)).intersect(r) else { return };
         let Some(dst_area) = dst_area.intersect(src_area) else { return };
-        
+
         let bytes_per_pixel = (per_pixel + 7) / 8;
         let per_copy = bytes_per_pixel * (dst_area.size().x as usize);
 

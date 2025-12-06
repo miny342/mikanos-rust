@@ -96,7 +96,7 @@ unsafe fn scan_bus(bus: u8) -> Result<(), Error> {
                 continue;
             }
             scan_device(bus, device)?;
-        } 
+        }
     }
     Ok(())
 }
@@ -380,7 +380,7 @@ unsafe fn configure_msi(dev: &Device, msg_addr: u32, msg_data: u32, num_vector_e
 
     if msi_cap_addr != 0 {
         return unsafe {
-            configure_msi_register(dev, msi_cap_addr, msg_addr, msg_data, num_vector_exponent) 
+            configure_msi_register(dev, msi_cap_addr, msg_addr, msg_data, num_vector_exponent)
         }
     }
     if msix_cap_addr != 0 {
@@ -414,5 +414,3 @@ pub unsafe fn configure_msi_fixed_destination(dev: &Device, apic_id: u8, trigger
         configure_msi(dev, msg_addr, msg_data, num_vector_exponent);
     }
 }
-
-

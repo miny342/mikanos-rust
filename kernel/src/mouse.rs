@@ -131,6 +131,3 @@ pub fn mouse_handler(_modifire: u8, move_x: i8, move_y: i8) {
     });
     warn!("elapsed: {:?}", t);
 }
-
-
-

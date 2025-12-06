@@ -57,9 +57,9 @@ impl Rectangle {
 }
 
 mod tests {
-    use super::{Rectangle, Vector2D};
     #[test_case]
-    fn test_rectangle_intersection() {    
+    fn test_rectangle_intersection() {
+        use super::{Rectangle, Vector2D};
         let r1 = Rectangle::new(Vector2D::new(0, 0), Vector2D::new(100, 100));
         let r2 = Rectangle::new(Vector2D::new(50, 50), Vector2D::new(100, 100));
         let r3 = Rectangle::new(Vector2D::new(200, 200), Vector2D::new(100, 100));
@@ -72,6 +72,7 @@ mod tests {
     }
     #[test_case]
     fn test_rectangle_contain() {
+        use super::{Rectangle, Vector2D};
         let r1 = Rectangle::new(Vector2D::new(0, 0), Vector2D::new(100, 100));
         assert!(r1.contain(Vector2D::new(50, 50)));
         assert!(!r1.contain(Vector2D::new(100, 0)));

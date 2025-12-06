@@ -21,7 +21,7 @@ use crate::usb::device::{
 use crate::usb::memory_pool::{
     MemPoolCrTRB, MemPoolERSTE, MemPoolErTRB, MemPoolTrTRB, TRB_BUF_LEN, TRBTable
 };
-use crate::usb::registers; 
+use crate::usb::registers;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigPhase {
@@ -68,7 +68,7 @@ impl XhcController {
         }
 
 
-        let cap_reg = unsafe { &*(mmio_base as *const registers::CapabilityRegisters) }; 
+        let cap_reg = unsafe { &*(mmio_base as *const registers::CapabilityRegisters) };
         debug!("cap reg: {}", cap_reg.length());
 
         // if cap_reg.hcc_params1.read() & 0b100 != 0 {
@@ -78,7 +78,7 @@ impl XhcController {
         let ptr = mmio_base + (cap_reg.hcc_params1.read() >> 16 << 2) as u64;
         let ptr = ptr as *mut u32;
         let mut val = ptr;
-        unsafe { 
+        unsafe {
             loop {
                 if *val & 0xff == 1 {
                     debug!("bios to os: {:x}", *val);

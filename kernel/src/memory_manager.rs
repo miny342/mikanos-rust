@@ -95,4 +95,3 @@ impl BitmapMemoryManager {
         return Ok(())
     }
 }
-

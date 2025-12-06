@@ -38,4 +38,3 @@ pub fn init_serial_and_logger() {
         panic!();
     });
 }
-
