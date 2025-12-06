@@ -27,10 +27,11 @@ pub struct Window {
     id: WindowID,
     area: Rectangle,
     shadow_buffer: FrameBuffer,
+    draggable: bool,
 }
 
 impl Window {
-    pub fn new(width: usize, height: usize, use_alpha: bool, pos_x: isize, pos_y: isize, fmt: PixelFormat) -> Self {
+    pub fn new(width: usize, height: usize, use_alpha: bool, pos_x: isize, pos_y: isize, fmt: PixelFormat, draggable: bool) -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
         let config = FrameBufferConfig {
             frame_buffer: null_mut(),
@@ -44,7 +45,8 @@ impl Window {
             use_alpha,
             id: WindowID::new(NonZeroUsize::new(NEXT_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed)).expect("next id is zero")),
             area: Rectangle::new(Vector2D::new(pos_x, pos_y), Vector2D::new(width as isize, height as isize)),
-            shadow_buffer: unsafe { FrameBuffer::new(config) }
+            shadow_buffer: unsafe { FrameBuffer::new(config) },
+            draggable
         }
     }
     fn draw_to(&self, screen: &mut FrameBuffer) {
@@ -154,6 +156,9 @@ impl Window {
     pub fn id(&self) -> WindowID {
         self.id
     }
+    pub fn draggable(&self) -> bool {
+        self.draggable
+    }
 }
 
 static WINDOW_MANAGER: OnceCell<Mutex<WindowManager>> = OnceCell::uninit();
@@ -177,9 +182,9 @@ impl WindowManager {
         let back_buffer = unsafe { FrameBuffer::new(back_buffer_config) };
         WINDOW_MANAGER.try_init_once(|| Mutex::new(WindowManager { screen_buffer: screen, back_buffer, windows: Vec::new(), stack: Vec::new() })).expect("already init");
     }
-    pub fn new_window(width: usize, height: usize, use_alpha: bool, pos_x: isize, pos_y: isize) -> (WindowID, Arc<Mutex<Window>>) {
+    pub fn new_window(width: usize, height: usize, use_alpha: bool, pos_x: isize, pos_y: isize, draggable: bool) -> (WindowID, Arc<Mutex<Window>>) {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
-        let raw_w = Window::new(width, height, use_alpha, pos_x, pos_y, mgr.screen_buffer.fmt());
+        let raw_w = Window::new(width, height, use_alpha, pos_x, pos_y, mgr.screen_buffer.fmt(), draggable);
         let id = raw_w.id;
         let w = Arc::new(Mutex::new(raw_w));
         let w2 = Arc::clone(&w);

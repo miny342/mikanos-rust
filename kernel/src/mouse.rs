@@ -47,7 +47,7 @@ pub struct MouseCursor {
 
 impl MouseCursor {
     pub fn new(screen_x: usize, screen_y: usize) -> WindowID {
-        let (id, w) = WindowManager::new_window(12, 14, true, 0, 0);
+        let (id, w) = WindowManager::new_window(12, 14, true, 0, 0, false);
         CURSOR.try_init_once(|| Mutex::new(
             MouseCursor {
                 pos_x: 0,
@@ -142,7 +142,10 @@ pub fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
     let modifire = Modifire(modifire);
     debug!("modifire: {:?}", modifire);
     if !mouse.prev_modifire.left_pressed() && modifire.left_pressed() {
-        mouse.dragging_window = WindowManager::find_window_by_position(&Vector2D::new(x, y), Some(mouse.window_id));
+        let w = WindowManager::find_window_by_position(&Vector2D::new(x, y), Some(mouse.window_id));
+        if let Some(ref tmp) = w && tmp.lock().draggable() {
+            mouse.dragging_window = w;
+        }
     } else if mouse.prev_modifire.left_pressed() && modifire.left_pressed() {
         if let Some(ref w) = mouse.dragging_window {
             let (w_old_r, w_id) = {

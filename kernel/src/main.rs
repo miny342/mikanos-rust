@@ -266,7 +266,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
 
     // xhc ok
 
-    let (main_window_id, main_window) = WindowManager::new_window(160, 52, false, 300, 100);
+    let (main_window_id, main_window) = WindowManager::new_window(160, 52, false, 300, 100, true);
     WindowManager::up_down(main_window_id, 1);
 
     let mut executor = task::executor::Executor::new();
