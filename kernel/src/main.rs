@@ -119,7 +119,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     let framebufferconfig = unsafe { *config };
 
     kernel::logger::init_serial_and_logger();
-    log::set_max_level(log::LevelFilter::Info);
+    log::set_max_level(log::LevelFilter::Warn);
     unsafe {
         kernel::segment::setup_segments();
         kernel::segment::set_ds_all(0);

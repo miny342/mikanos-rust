@@ -3,7 +3,7 @@ use conquer_once::spin::OnceCell;
 use log::{debug, warn};
 use spin::Mutex;
 
-use crate::{graphics::PixelColor, serial_println, timer::check_time, window::{Window, WindowManager}};
+use crate::{graphics::PixelColor, math::Vector2D, serial_println, timer::check_time, window::{Window, WindowID, WindowManager}};
 
 const MOUSE_CURSOR: [[u8; 3]; 14] = [
     [64, 0, 0],
@@ -22,6 +22,15 @@ const MOUSE_CURSOR: [[u8; 3]; 14] = [
     [84, 0, 0]
 ];
 
+#[bitfield_struct::bitfield(u8)]
+struct Modifire {
+    left_pressed: bool,
+    right_pressed: bool,
+    center_pressed: bool,
+    #[bits(5)]
+    _reserved: u8,
+}
+
 static CURSOR: OnceCell<Mutex<MouseCursor>> = OnceCell::uninit(); // Mutex::new(MouseCursor { pos_x: 0, pos_y: 0, erase_color: PixelColor { r: 0, g: 0, b: 0, a: 255 } });
 
 pub struct MouseCursor {
@@ -31,11 +40,13 @@ pub struct MouseCursor {
     screen_y: usize,
     _erase_color: PixelColor,
     window: Arc<Mutex<Window>>,
-    window_id: usize
+    window_id: WindowID,
+    prev_modifire: Modifire,
+    dragging_window: Option<Arc<Mutex<Window>>>,
 }
 
 impl MouseCursor {
-    pub fn new(screen_x: usize, screen_y: usize) -> usize {
+    pub fn new(screen_x: usize, screen_y: usize) -> WindowID {
         let (id, w) = WindowManager::new_window(12, 14, true, 0, 0);
         CURSOR.try_init_once(|| Mutex::new(
             MouseCursor {
@@ -46,6 +57,8 @@ impl MouseCursor {
                 _erase_color: PixelColor { r: 0, g: 0, b: 0, a: 0 },
                 window: w,
                 window_id: id,
+                prev_modifire: Modifire(0),
+                dragging_window: None,
             }
         )).unwrap();
         Self::draw_mouse_cursor(&CURSOR.try_get().unwrap().lock());
@@ -73,7 +86,7 @@ impl MouseCursor {
             }
         }
     }
-    pub fn id() -> usize {
+    pub fn id() -> WindowID {
         CURSOR.try_get().unwrap().lock().window_id
     }
 
@@ -105,7 +118,8 @@ impl MouseCursor {
     // }
 }
 
-pub fn mouse_handler(_modifire: u8, move_x: i8, move_y: i8) {
+pub fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
+    log::set_max_level(log::LevelFilter::Debug);
     let mut mouse = CURSOR.get().unwrap().lock();
     let mut x = (mouse.pos_x as isize) + (move_x as isize);
     let mut y = (mouse.pos_y as isize) + (move_y as isize);
@@ -119,8 +133,33 @@ pub fn mouse_handler(_modifire: u8, move_x: i8, move_y: i8) {
     } else if y >= mouse.screen_y as isize {
         y = mouse.screen_y as isize - 1;
     }
+    let diff_x = x - mouse.pos_x as isize;
+    let diff_y = y - mouse.pos_y as isize;
+
     mouse.pos_x = x as usize;
     mouse.pos_y = y as usize;
+
+    let modifire = Modifire(modifire);
+    debug!("modifire: {:?}", modifire);
+    if !mouse.prev_modifire.left_pressed() && modifire.left_pressed() {
+        mouse.dragging_window = WindowManager::find_window_by_position(&Vector2D::new(x, y), Some(mouse.window_id));
+    } else if mouse.prev_modifire.left_pressed() && modifire.left_pressed() {
+        if let Some(ref w) = mouse.dragging_window {
+            let (w_old_r, w_id) = {
+                let mut lck = w.lock();
+                (lck.move_relative(diff_x, diff_y), lck.id())
+            };
+            let t = check_time(|| {
+                WindowManager::draw_rect_area(&w_old_r);
+                WindowManager::draw_window(w_id);
+            });
+            debug!("dragging elapsed: {:?}", t);
+        }
+    } else if mouse.prev_modifire.left_pressed() && !modifire.left_pressed() {
+        mouse.dragging_window = None;
+    }
+
+    mouse.prev_modifire = modifire;
     let (old_r, id) = {
         let mut lck = mouse.window.lock();
         (lck.move_to(x, y), lck.id())
@@ -129,5 +168,6 @@ pub fn mouse_handler(_modifire: u8, move_x: i8, move_y: i8) {
         WindowManager::draw_rect_area(&old_r);
         WindowManager::draw_window(id);
     });
-    warn!("elapsed: {:?}", t);
+    debug!("elapsed: {:?}", t);
+    log::set_max_level(log::LevelFilter::Warn);
 }

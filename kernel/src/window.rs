@@ -1,3 +1,4 @@
+use core::num::NonZeroUsize;
 use core::ptr::null_mut;
 use core::sync::atomic::AtomicUsize;
 
@@ -11,18 +12,26 @@ use crate::graphics::{PixelColor, FrameBuffer};
 use crate::math::{Rectangle, Vector2D};
 use crate::serial_println;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowID(NonZeroUsize);
+
+impl WindowID {
+    fn new(id: NonZeroUsize) -> WindowID {
+        WindowID(id)
+    }
+}
 
 pub struct Window {
     data: Vec<Vec<PixelColor>>,
     use_alpha: bool,
-    id: usize,
+    id: WindowID,
     area: Rectangle,
     shadow_buffer: FrameBuffer,
 }
 
 impl Window {
     pub fn new(width: usize, height: usize, use_alpha: bool, pos_x: isize, pos_y: isize, fmt: PixelFormat) -> Self {
-        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
         let config = FrameBufferConfig {
             frame_buffer: null_mut(),
             pixels_per_scan_line: width,
@@ -33,7 +42,7 @@ impl Window {
         Window {
             data: m_vec![m_vec![PixelColor { r: 0, g: 0, b: 0, a: 255}; width]; height],
             use_alpha,
-            id: NEXT_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed),
+            id: WindowID::new(NonZeroUsize::new(NEXT_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed)).expect("next id is zero")),
             area: Rectangle::new(Vector2D::new(pos_x, pos_y), Vector2D::new(width as isize, height as isize)),
             shadow_buffer: unsafe { FrameBuffer::new(config) }
         }
@@ -90,9 +99,11 @@ impl Window {
         self.area.pos.y = pos_y;
         old_r
     }
-    pub fn move_relative(&mut self, diff_x: isize, diff_y: isize) {
+    pub fn move_relative(&mut self, diff_x: isize, diff_y: isize) -> Rectangle {
+        let old_r = self.area.clone();
         self.area.pos.x += diff_x;
         self.area.pos.y += diff_y;
+        old_r
     }
     pub fn move_up_buffer(&mut self, value: usize, fill: u8) {
         self.shadow_buffer.move_up(value, fill);
@@ -140,7 +151,7 @@ impl Window {
         self.draw_rect(&Rectangle::new(Vector2D::new(0, 22), Vector2D::new(width as isize, height as isize - 22)), PixelColor::from_hex(0x161616));
         self.write_string(title, PixelColor::BLACK, 24, 4);
     }
-    pub fn id(&self) -> usize {
+    pub fn id(&self) -> WindowID {
         self.id
     }
 }
@@ -166,7 +177,7 @@ impl WindowManager {
         let back_buffer = unsafe { FrameBuffer::new(back_buffer_config) };
         WINDOW_MANAGER.try_init_once(|| Mutex::new(WindowManager { screen_buffer: screen, back_buffer, windows: Vec::new(), stack: Vec::new() })).expect("already init");
     }
-    pub fn new_window(width: usize, height: usize, use_alpha: bool, pos_x: isize, pos_y: isize) -> (usize, Arc<Mutex<Window>>) {
+    pub fn new_window(width: usize, height: usize, use_alpha: bool, pos_x: isize, pos_y: isize) -> (WindowID, Arc<Mutex<Window>>) {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
         let raw_w = Window::new(width, height, use_alpha, pos_x, pos_y, mgr.screen_buffer.fmt());
         let id = raw_w.id;
@@ -175,11 +186,22 @@ impl WindowManager {
         mgr.windows.push(w);
         (id, w2)
     }
-    pub fn find_window(id: usize) -> Option<Arc<Mutex<Window>>> {
+    pub fn find_window(id: WindowID) -> Option<Arc<Mutex<Window>>> {
         WINDOW_MANAGER.get().unwrap().lock().find_window_(id)
     }
-    fn find_window_(&mut self, id: usize) -> Option<Arc<Mutex<Window>>> {
+    fn find_window_(&mut self, id: WindowID) -> Option<Arc<Mutex<Window>>> {
         if let Some(w) = self.windows.iter().filter(|v| v.lock().id == id).next() {
+            Some(Arc::clone(&w))
+        } else {
+            None
+        }
+    }
+    pub fn find_window_by_position(pos: &Vector2D<isize>, exclude: Option<WindowID>) -> Option<Arc<Mutex<Window>>> {
+        let mgr = WINDOW_MANAGER.get().unwrap().lock();
+        if let Some(w) = mgr.stack.iter().rev().filter(|v| {
+            let w = v.lock();
+            w.area.contain(pos) && exclude.is_none_or(|x| x != w.id())
+        }).next() {
             Some(Arc::clone(&w))
         } else {
             None
@@ -201,7 +223,7 @@ impl WindowManager {
         mgr.stack.iter().map(|v| v.lock().draw_rect_area_to(back_buffer, r)).for_each(drop);
         screen.copy_area(&back_buffer.area(Vector2D::new(0,0)), &back_buffer, r);
     }
-    pub fn draw_window(id: usize) {
+    pub fn draw_window(id: WindowID) {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
         let back_buffer = unsafe  { &mut *&raw mut mgr.back_buffer };
         let screen = unsafe { &mut *(&mut mgr.screen_buffer as *mut FrameBuffer) };
@@ -219,13 +241,13 @@ impl WindowManager {
             screen.copy_area(&back_buffer.area(Vector2D::new(0,0)), &back_buffer, r);
         }
     }
-    pub fn hide(id: usize) {
+    pub fn hide(id: WindowID) {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
         if let Some((pos, _)) = mgr.stack.iter().enumerate().filter(|(_, v)| v.lock().id == id).next() {
             mgr.stack.remove(pos);
         }
     }
-    pub fn up_down(id: usize, new_height: usize) {
+    pub fn up_down(id: WindowID, new_height: usize) {
         let mut mgr = WINDOW_MANAGER.get().unwrap().lock();
         let mut new_height = new_height;
         if new_height > mgr.stack.len() {

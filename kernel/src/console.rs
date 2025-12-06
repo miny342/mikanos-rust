@@ -5,7 +5,7 @@ use conquer_once::spin::OnceCell;
 use spin::{MutexGuard, Mutex};
 
 use crate::graphics::*;
-use crate::window::{Window, WindowManager};
+use crate::window::{Window, WindowID, WindowManager};
 
 const ROW: usize = 45;
 const COL: usize = 100;
@@ -26,7 +26,7 @@ pub fn _print(args: fmt::Arguments) {
     if let Ok(c) = Console::get() {
         let mut lck = c.lock();
         lck.write_fmt(args).unwrap();
-        WindowManager::draw_window(lck._window_id);
+        WindowManager::draw_window(lck.window_id);
     }
 }
 
@@ -38,13 +38,13 @@ pub struct Console {
     color: PixelColor,
     _bg: PixelColor,
     window: Arc<Mutex<Window>>,
-    _window_id: usize,
+    window_id: WindowID,
 }
 
 static CONSOLE: OnceCell<Mutex<Console>> = OnceCell::uninit();
 
 impl Console {
-    pub fn new(color: PixelColor, bg: PixelColor, width: usize, height: usize) -> usize {
+    pub fn new(color: PixelColor, bg: PixelColor, width: usize, height: usize) -> WindowID {
         let (id, window) = WindowManager::new_window(width, height, false, 0, 0);
         CONSOLE.try_init_once(|| Mutex::new(Console {
             row: ROW,
@@ -54,7 +54,7 @@ impl Console {
             color,
             _bg: bg,
             window,
-            _window_id: id,
+            window_id: id,
         })).unwrap();
         id
     }

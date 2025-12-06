@@ -51,7 +51,7 @@ impl Rectangle {
     pub fn size(&self) -> &Vector2D<isize> {
         &self.size
     }
-    pub fn contain(&self, v: Vector2D<isize>) -> bool {
+    pub fn contain(&self, v: &Vector2D<isize>) -> bool {
         self.pos.x <= v.x && v.x < self.pos.x + self.size.x && self.pos.y <= v.y && v.y < self.pos.y + self.size.y
     }
 }
