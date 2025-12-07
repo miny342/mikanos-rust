@@ -19,9 +19,12 @@ use uefi::boot;
 
 use elf_rs::Elf;
 use elf_rs::ProgramType;
+use uefi::table::cfg::ACPI2_GUID;
 
 use core::arch::asm;
+use core::ffi::c_void;
 use core::ops::Deref;
+use core::ptr::null_mut;
 use common::writer_config::*;
 
 #[macro_use]
@@ -52,7 +55,7 @@ fn write_memmap(dir: &mut Directory) -> uefi::Result {
     Ok(())
 }
 
-fn load_kernel(dir: &mut Directory) -> Option<extern "sysv64" fn(*const FrameBufferConfig, *const MemoryMapOwned) -> !> {
+fn load_kernel(dir: &mut Directory) -> Option<extern "sysv64" fn(*const FrameBufferConfig, *const MemoryMapOwned, *const c_void) -> !> {
     let mut str_buf = [0; 100];
     let name = uefi::CStr16::from_str_with_buf("\\kernel", &mut str_buf).unwrap();
     let kernel_file = dir.open(name, FileMode::Read, FileAttribute::READ_ONLY).unwrap().into_type().unwrap();
@@ -146,7 +149,7 @@ fn load_kernel(dir: &mut Directory) -> Option<extern "sysv64" fn(*const FrameBuf
         info!("entry point: {:x}", entry_point);
 
         let kernel_entry = unsafe {
-            let f: extern "sysv64" fn(*const FrameBufferConfig, *const MemoryMapOwned) -> ! = core::mem::transmute(entry_point);
+            let f: extern "sysv64" fn(*const FrameBufferConfig, *const MemoryMapOwned, *const c_void) -> ! = core::mem::transmute(entry_point);
             f
         };
         Some(kernel_entry)
@@ -159,7 +162,7 @@ fn load_kernel(dir: &mut Directory) -> Option<extern "sysv64" fn(*const FrameBuf
 fn main() -> Status {
     uefi::helpers::init().unwrap();
 
-    log::set_max_level(log::LevelFilter::Error);
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("Hello, World!");
     let mut fs = boot::get_image_file_system(boot::image_handle()).unwrap();
@@ -171,6 +174,19 @@ fn main() -> Status {
 
     drop(root_dir);
     drop(fs);
+
+    let acpi_table_ptr = uefi::system::with_config_table(|configtablearray| {
+        for entry in configtablearray {
+            if entry.guid == ACPI2_GUID {
+                return entry.address;
+            }
+        }
+        null_mut()
+    });
+
+    if acpi_table_ptr.is_null() {
+        panic!("acpi_table is null");
+    }
 
     let gop_handle = boot::get_handle_for_protocol::<GraphicsOutput>().unwrap();
     let mut gop = boot::open_protocol_exclusive::<GraphicsOutput>(gop_handle).unwrap();
@@ -194,9 +210,12 @@ fn main() -> Status {
         },
     };
 
+    let config_ptr = boot::allocate_pool(boot::MemoryType::LOADER_DATA, size_of::<FrameBufferConfig>()).unwrap().as_ptr() as *mut FrameBufferConfig;
+    unsafe { core::ptr::copy_nonoverlapping(&raw const config, config_ptr, size_of::<FrameBufferConfig>()); }
+
     if let Some(kernel_entry) = k {
         let memmap = unsafe { boot::exit_boot_services(None) };
-        kernel_entry(&config, &memmap);
+        kernel_entry(config_ptr, &memmap, acpi_table_ptr);
     }
     loop {
         unsafe {

@@ -29,6 +29,7 @@ pub mod serial;
 pub mod entry;
 pub mod math;
 pub mod io_port;
+pub mod acpi;
 
 extern crate alloc;
 
@@ -84,7 +85,7 @@ pub fn test_panic_handler(info: &PanicInfo) -> ! {
 entry!(crate::kernel_test);
 
 #[cfg(test)]
-pub extern "sysv64" fn kernel_test(_config: *const common::writer_config::FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
+pub extern "sysv64" fn kernel_test(_config: *const common::writer_config::FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned, _acpi_table_ptr: *const core::ffi::c_void) -> ! {
     // ロガーとアロケータのみ初期化
     logger::init_serial_and_logger();
     log::set_max_level(log::LevelFilter::Trace);

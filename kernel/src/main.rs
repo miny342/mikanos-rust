@@ -78,7 +78,7 @@ async fn counter2() {
 
 kernel::entry!(kernel_main_new_stack);
 
-pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
+pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned, acpi_table_ptr: *const core::ffi::c_void) -> ! {
     // 初期化は割り込みなしにしておく
     unsafe { disable_interrupt() };
     let framebufferconfig = unsafe { *config };
@@ -102,6 +102,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     WindowManager::up_down(mouse_id, 1);
     WindowManager::draw();
 
+    unsafe { kernel::acpi::acpi_init(acpi_table_ptr); }
     initialize_apic_timer();
 
     kernel::println!("hello");
