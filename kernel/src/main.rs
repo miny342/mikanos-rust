@@ -13,6 +13,7 @@ use alloc::boxed::Box;
 use alloc::format;
 use futures_util::StreamExt;
 use futures_util::task::AtomicWaker;
+use kernel::timer::get_tick;
 use kernel::usb::controller::init_xhc;
 use log::{debug, error};
 
@@ -59,14 +60,12 @@ impl futures_util::Stream for TmpTask {
 }
 
 async fn counter(window: alloc::sync::Arc<spin::Mutex<kernel::window::Window>>) {
-    let mut cnt = 0;
     let mut task = Box::new(TmpTask { state: true});
     while task.next().await.is_some() {
         let id = {
             let mut lck = window.lock();
             lck.draw_basic_window("Hello Window");
-            lck.write_string(format!("Counter: {:05}", cnt).as_str(), PixelColor::WHITE, 8, 30);
-            cnt += 1;
+            lck.write_string(format!("Counter: {:05}", get_tick()).as_str(), PixelColor::WHITE, 8, 30);
             lck.id()
         };
         WindowManager::draw_window(id);

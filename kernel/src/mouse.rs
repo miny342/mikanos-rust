@@ -3,7 +3,7 @@ use conquer_once::spin::OnceCell;
 use log::{debug, warn};
 use spin::Mutex;
 
-use crate::{graphics::PixelColor, math::Vector2D, serial_println, timer::check_time, window::{Window, WindowID, WindowManager}};
+use crate::{graphics::PixelColor, math::Vector2D, serial_println, window::{Window, WindowID, WindowManager}};
 
 const MOUSE_CURSOR: [[u8; 3]; 14] = [
     [64, 0, 0],
