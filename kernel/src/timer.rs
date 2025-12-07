@@ -1,4 +1,7 @@
-use core::sync::atomic::AtomicUsize;
+use core::{cmp::{Ordering, Reverse}, future::Pending, sync::atomic::{AtomicBool, AtomicUsize}};
+use alloc::{collections::BinaryHeap, sync::Arc};
+use futures_util::task::AtomicWaker;
+use spin::Mutex;
 
 const COUNT_MAX: u32 = 0xffffffff;
 const LVT_TIMER: *mut u32 = 0xfee00320 as *mut u32;
@@ -7,6 +10,120 @@ const CURRENT_COUNT: *mut u32 = 0xfee00390 as *mut u32;
 const DIVIDE_CONFIGURATION: *mut u32 = 0xfee003e0 as *mut u32;
 
 static TICK: AtomicUsize = AtomicUsize::new(0);
+static PRIORITY_QUEUE: Mutex<BinaryHeap<Timer>> = Mutex::new(BinaryHeap::new());
+static TIMER_MANAGER_WAKER: AtomicWaker = AtomicWaker::new();
+
+struct TimerInner {
+    timeout: Reverse<usize>,
+    value: usize,
+    waker: AtomicWaker,
+}
+
+impl TimerInner {
+    fn new(timeout: usize, value: usize) -> TimerInner {
+        TimerInner { timeout: Reverse(timeout), value, waker: AtomicWaker::new() }
+    }
+    fn timeout(&self) -> usize {
+        self.timeout.0
+    }
+    fn value(&self) -> usize {
+        self.value
+    }
+    fn waker(&self) -> &AtomicWaker {
+        &self.waker
+    }
+}
+
+impl PartialEq for TimerInner {
+    fn eq(&self, other: &Self) -> bool {
+        self.timeout == other.timeout
+    }
+}
+
+impl Eq for TimerInner {}
+
+impl PartialOrd for TimerInner {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.timeout.cmp(&other.timeout))
+    }
+}
+
+impl Ord for TimerInner {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.timeout.cmp(&other.timeout)
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub struct Timer {
+    inner: Arc<TimerInner>,
+}
+
+impl Timer {
+    pub fn new(timeout: usize, value: usize) -> Timer {
+        Timer { inner: Arc::new(TimerInner::new(timeout, value)) }
+    }
+    fn add(&self) {
+        let mut lck = PRIORITY_QUEUE.lock();
+        lck.push(Timer { inner: Arc::clone(&self.inner) });
+    }
+    // pub fn timeout(&self) -> usize {
+    //     self.timeout.0
+    // }
+    // pub fn value(&self) -> usize {
+    //     self.value
+    // }
+    // pub fn waker(&self) -> &AtomicWaker {
+    //     &self.waker
+    // }
+}
+
+
+impl Future for Timer {
+    type Output = usize;
+    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+        let tick = get_tick();
+        if tick > self.inner.timeout() {
+            core::task::Poll::Ready(self.inner.value())
+        } else {
+            self.inner.waker().register(cx.waker());
+            self.add();
+
+            if get_tick() > self.inner.timeout() {
+                self.inner.waker().take();
+                core::task::Poll::Ready(self.inner.value())
+            } else {
+                core::task::Poll::Pending
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TimerManager;
+
+impl Future for TimerManager {
+    type Output = ();
+    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+        let tick = get_tick();
+        // ロックはとれるなら取る
+        if let Some(mut lck) = PRIORITY_QUEUE.try_lock() {
+            while let Some(t) = lck.peek() {
+                if t.inner.timeout() > tick {
+                    break;
+                }
+                t.inner.waker().wake();
+                lck.pop();
+            }
+        }
+        TIMER_MANAGER_WAKER.register(cx.waker());
+        core::task::Poll::Pending
+    }
+}
+
+pub async fn timer_manager() {
+    TimerManager.await
+}
 
 pub fn initialize_apic_timer() {
     unsafe {
@@ -35,29 +152,42 @@ fn stop_lapic_timer() {
     }
 }
 
-pub static TIMER_WAKER: futures_util::task::AtomicWaker = futures_util::task::AtomicWaker::new();
-
 pub fn get_tick() -> usize {
     TICK.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 pub extern "x86-interrupt" fn int_handler_lapic_timer(_frame: crate::interrupt::InterruptFrame) {
     TICK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    TIMER_WAKER.wake();
+    TIMER_MANAGER_WAKER.wake();
     crate::interrupt::notify_end_of_interrupt();
 }
 
-static mut SUM: usize = 0;
-static mut SUM_: usize = 0;
-
-fn check_time<T: Fn() -> ()>(f: T) -> (u32, usize) {
-    start_lapic_timer();
-    f();
-    let elapsed = lapic_timer_elapsed();
-    stop_lapic_timer();
-    unsafe {
-        SUM += elapsed as usize;
-        SUM_ += 1;
+mod test {
+    #[test_case]
+    fn timer_ord_test() {
+        use super::Timer;
+        let t1 = Timer::new(1, 2);
+        let t2 = Timer::new(2, 3);
+        let t3 = Timer::new(1, 3);
+        assert!(t1 == t3);
+        assert!(t2 < t1);
+        assert!(t1 > t2);
+        assert!(t1 == t1);
+        assert!(t3 > t2);
     }
-    (elapsed, unsafe { SUM / SUM_ })
+    #[test_case]
+    fn timer_binary_heap() {
+        use super::Timer;
+        use alloc::collections::BinaryHeap;
+        let mut heap = BinaryHeap::new();
+        heap.push(Timer::new(1, 2));
+        heap.push(Timer::new(2, 3));
+        heap.push(Timer::new(1, 3));
+        let v = heap.pop().unwrap();
+        assert!(v.inner.timeout() == 1);
+        let v2 = heap.pop().unwrap();
+        assert!(v2.inner.timeout() == 1);
+        let v3 = heap.pop().unwrap();
+        assert!(v3.inner.timeout() == 2);
+    }
 }

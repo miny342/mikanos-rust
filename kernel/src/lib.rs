@@ -84,10 +84,16 @@ pub fn test_panic_handler(info: &PanicInfo) -> ! {
 entry!(crate::kernel_test);
 
 #[cfg(test)]
-pub extern "sysv64" fn kernel_test(_config: *const common::writer_config::FrameBufferConfig, _memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
-    // ロガーのみ初期化
+pub extern "sysv64" fn kernel_test(_config: *const common::writer_config::FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) -> ! {
+    // ロガーとアロケータのみ初期化
     logger::init_serial_and_logger();
     log::set_max_level(log::LevelFilter::Trace);
+    unsafe {
+        segment::init_segment();
+        paging::setup_identity_page_table();
+        memory_manager::init_memory_manager(memmap_ptr);
+        allocator::init_allocator();
+    }
     test_main();
     exit_qemu(QemuExitCode::Failed);
 }

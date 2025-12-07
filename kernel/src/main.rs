@@ -11,9 +11,10 @@ use core::arch::asm;
 use core::panic::PanicInfo;
 use alloc::boxed::Box;
 use alloc::format;
-use futures_util::StreamExt;
-use futures_util::task::AtomicWaker;
+use kernel::serial_println;
+use kernel::timer::Timer;
 use kernel::timer::get_tick;
+use kernel::timer::timer_manager;
 use kernel::usb::controller::init_xhc;
 use log::{debug, error};
 
@@ -42,26 +43,21 @@ fn panic(info: &PanicInfo) -> ! {
     }
 }
 
-
-struct TmpTask {state: bool}
-
-impl futures_util::Stream for TmpTask {
-    type Item = ();
-    fn poll_next(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Option<Self::Item>> {
-        if self.state {
-            self.get_mut().state = false;
-            core::task::Poll::Ready(Some(()))
-        } else {
-            kernel::timer::TIMER_WAKER.register(cx.waker());
-            self.get_mut().state = true;
-            core::task::Poll::Pending
-        }
-    }
-}
-
 async fn counter(window: alloc::sync::Arc<spin::Mutex<kernel::window::Window>>) {
-    let mut task = Box::new(TmpTask { state: true});
-    while task.next().await.is_some() {
+    let id = {
+        let mut lck = window.lock();
+        lck.draw_basic_window("Hello Window");
+        lck.write_string(format!("Counter: {:05}", get_tick()).as_str(), PixelColor::WHITE, 8, 30);
+        lck.id()
+    };
+    WindowManager::draw_window(id);
+
+    let mut timeout = 200;
+    let mut value = 1;
+    let mut timer = Timer::new(timeout, value);
+    loop {
+        let v = timer.await;
+        serial_println!("Timer: {} {}", timeout, v);
         let id = {
             let mut lck = window.lock();
             lck.draw_basic_window("Hello Window");
@@ -69,7 +65,15 @@ async fn counter(window: alloc::sync::Arc<spin::Mutex<kernel::window::Window>>) 
             lck.id()
         };
         WindowManager::draw_window(id);
+        timeout += 100;
+        value += 1;
+        timer = Timer::new(timeout, value);
     }
+}
+
+async fn counter2() {
+    Timer::new(600, 100).await;
+    log::warn!("Timer: 600 100");
 }
 
 kernel::entry!(kernel_main_new_stack);
@@ -127,5 +131,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     let mut executor = task::executor::Executor::new();
     executor.spawn(task::Task::new(xhc.process_event()));
     executor.spawn(task::Task::new(counter(main_window)));
+    executor.spawn(task::Task::new(timer_manager()));
+    executor.spawn(task::Task::new(counter2()));
     executor.run();
 }

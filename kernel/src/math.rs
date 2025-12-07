@@ -74,10 +74,10 @@ mod tests {
     fn test_rectangle_contain() {
         use super::{Rectangle, Vector2D};
         let r1 = Rectangle::new(Vector2D::new(0, 0), Vector2D::new(100, 100));
-        assert!(r1.contain(Vector2D::new(50, 50)));
-        assert!(!r1.contain(Vector2D::new(100, 0)));
-        assert!(r1.contain(Vector2D::new(0, 0)));
-        assert!(!r1.contain(Vector2D::new(0, 100)));
-        assert!(!r1.contain(Vector2D::new(-1, -1)));
+        assert!(r1.contain(&Vector2D::new(50, 50)));
+        assert!(!r1.contain(&Vector2D::new(100, 0)));
+        assert!(r1.contain(&Vector2D::new(0, 0)));
+        assert!(!r1.contain(&Vector2D::new(0, 100)));
+        assert!(!r1.contain(&Vector2D::new(-1, -1)));
     }
 }
