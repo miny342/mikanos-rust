@@ -41,8 +41,6 @@ fn panic(info: &PanicInfo) -> ! {
     }
 }
 
-static TMP_WAKER: AtomicWaker = AtomicWaker::new();
-static TMP2_WAKER: AtomicWaker = AtomicWaker::new();
 
 struct TmpTask {state: bool}
 
@@ -50,38 +48,13 @@ impl futures_util::Stream for TmpTask {
     type Item = ();
     fn poll_next(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Option<Self::Item>> {
         if self.state {
-            TMP2_WAKER.wake();
             self.get_mut().state = false;
             core::task::Poll::Ready(Some(()))
         } else {
-            TMP_WAKER.register(cx.waker());
+            kernel::timer::TIMER_WAKER.register(cx.waker());
             self.get_mut().state = true;
             core::task::Poll::Pending
         }
-    }
-}
-
-struct Tmp2Task {state: bool}
-
-impl futures_util::Stream for Tmp2Task {
-    type Item = ();
-    fn poll_next(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Option<Self::Item>> {
-        if self.state {
-            TMP_WAKER.wake();
-            self.get_mut().state = false;
-            core::task::Poll::Ready(Some(()))
-        } else {
-            TMP2_WAKER.register(cx.waker());
-            self.get_mut().state = true;
-            core::task::Poll::Pending
-        }
-    }
-}
-
-async fn tmp_task() {
-    let mut task = Box::new(Tmp2Task { state: true});
-    while task.next().await.is_some() {
-        // debug!("tmp task running");
     }
 }
 
@@ -155,6 +128,5 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     let mut executor = task::executor::Executor::new();
     executor.spawn(task::Task::new(xhc.process_event()));
     executor.spawn(task::Task::new(counter(main_window)));
-    executor.spawn(task::Task::new(tmp_task()));
     executor.run();
 }

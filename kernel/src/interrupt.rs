@@ -22,7 +22,8 @@ static IDT: Mutex<[InterruptDescriptor; 256]> = Mutex::new([
 ]);
 
 pub enum InterruptVector {
-    XHCI = 0x40
+    XHCI = 0x40,
+    LAPICTimer = 0x41,
 }
 
 pub enum DescriptorType {
@@ -110,7 +111,7 @@ pub fn load_idt() {
 
 pub fn notify_end_of_interrupt() {
     unsafe {
-        *(0xfee000b0 as *mut u32) = 0;
+        (0xfee000b0 as *mut u32).write_volatile(0);
     }
 }
 
@@ -135,5 +136,6 @@ pub unsafe fn enable_and_halt_interrupt() {
 pub unsafe fn init_interrupt() {
     let cs = get_cs();
     set_idt_entry(InterruptVector::XHCI as usize, InterruptDescriptorAttr::new(DescriptorType::InterruptGate, 0, true, 0), crate::usb::controller::int_handler_xhci as *const fn() as u64, cs);
+    set_idt_entry(InterruptVector::LAPICTimer as usize, InterruptDescriptorAttr::new(DescriptorType::InterruptGate, 0, true, 0), crate::timer::int_handler_lapic_timer as *const fn() as u64, cs);
     load_idt();
 }

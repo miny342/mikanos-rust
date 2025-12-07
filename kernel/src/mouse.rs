@@ -124,11 +124,8 @@ pub fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
                 let mut lck = w.lock();
                 (lck.move_relative(diff_x, diff_y), lck.id())
             };
-            let t = check_time(|| {
-                WindowManager::draw_rect_area(&w_old_r);
-                WindowManager::draw_window(w_id);
-            });
-            debug!("dragging elapsed: {:?}", t);
+            WindowManager::draw_rect_area(&w_old_r);
+            WindowManager::draw_window(w_id);
         }
     } else if mouse.prev_modifire.left_pressed() && !modifire.left_pressed() {
         mouse.dragging_window = None;
@@ -139,10 +136,7 @@ pub fn mouse_handler(modifire: u8, move_x: i8, move_y: i8) {
         let mut lck = mouse.window.lock();
         (lck.move_to(x, y), lck.id())
     };
-    let t = check_time(|| {
-        WindowManager::draw_rect_area(&old_r);
-        WindowManager::draw_window(id);
-    });
-    debug!("elapsed: {:?}", t);
+    WindowManager::draw_rect_area(&old_r);
+    WindowManager::draw_window(id);
     log::set_max_level(log::LevelFilter::Warn);
 }
