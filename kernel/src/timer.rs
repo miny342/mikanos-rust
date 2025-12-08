@@ -9,6 +9,8 @@ const INITIAL_COUNT: *mut u32 = 0xfee00380 as *mut u32;
 const CURRENT_COUNT: *mut u32 = 0xfee00390 as *mut u32;
 const DIVIDE_CONFIGURATION: *mut u32 = 0xfee003e0 as *mut u32;
 
+const TIMER_FREQ: u32 = 100;
+
 static TICK: AtomicUsize = AtomicUsize::new(0);
 static PRIORITY_QUEUE: Mutex<BinaryHeap<Timer>> = Mutex::new(BinaryHeap::new());
 static TIMER_MANAGER_WAKER: AtomicWaker = AtomicWaker::new();
@@ -125,12 +127,27 @@ pub async fn timer_manager() {
     TimerManager.await
 }
 
-pub fn initialize_apic_timer() {
+pub fn initialize_apic_timer(fadt: Option<&'static crate::acpi::FADT>) {
     unsafe {
-        *DIVIDE_CONFIGURATION = 0b1011;
-        // *LVT_TIMER = (0b001 << 16) | 32;
-        *LVT_TIMER = (0b010 << 16) | crate::interrupt::InterruptVector::LAPICTimer as u32;
-        *INITIAL_COUNT = 0x1000000;
+        if let Some(fadt) = fadt {
+            *DIVIDE_CONFIGURATION = 0b1011;
+            *LVT_TIMER = 0b001 << 16;
+
+            start_lapic_timer();
+            fadt.wait_milliseconds(100);
+            let elapsed = lapic_timer_elapsed();
+            stop_lapic_timer();
+
+            let lapic_timer_freq = elapsed * 10; // 1s
+
+            *DIVIDE_CONFIGURATION = 0b1011;
+            *LVT_TIMER = (0b010 << 16) | crate::interrupt::InterruptVector::LAPICTimer as u32;
+            *INITIAL_COUNT = lapic_timer_freq / TIMER_FREQ;
+        } else {
+            *DIVIDE_CONFIGURATION = 0b1011;
+            *LVT_TIMER = (0b010 << 16) | crate::interrupt::InterruptVector::LAPICTimer as u32;
+            *INITIAL_COUNT = 0x1000000;
+        }
     }
 }
 

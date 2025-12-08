@@ -1,5 +1,7 @@
 use core::ffi::c_void;
 
+use crate::io_port::ind;
+
 #[repr(C, packed)]
 struct RSDP {
     signature: [u8; 8],
@@ -98,6 +100,20 @@ impl FADT {
         } else {
             None
         }
+    }
+    pub fn wait_milliseconds(&self, ms: u32) {
+        let pm_timer_32 = self.flags & (1 << 8) != 0;
+        let start = unsafe { ind(self.pm_tmr_blk as u16) };
+        let tmp = start.saturating_add(3579545 * ms / 1000);
+        let end = if !pm_timer_32 {
+            tmp & 0xffffff
+        } else {
+            tmp
+        };
+        if end < start {
+            while unsafe { ind(self.pm_tmr_blk as u16) >= start } {}
+        }
+        while unsafe { ind(self.pm_tmr_blk as u16) } < end {}
     }
 }
 

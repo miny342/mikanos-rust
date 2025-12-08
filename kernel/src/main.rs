@@ -102,17 +102,13 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
     WindowManager::up_down(mouse_id, 1);
     WindowManager::draw();
 
-    let fadt = unsafe { kernel::acpi::get_fadt(acpi_table_ptr) };
-    if let Some(fadt) = fadt {
-        log::set_max_level(log::LevelFilter::Debug);
-        let pm_tmr_blk = fadt.pm_tmr_blk;
-        let flags = fadt.flags;
-        debug!("fadt: {:x} {:x}", pm_tmr_blk, flags);
-        log::set_max_level(log::LevelFilter::Warn);
-    }
-    initialize_apic_timer();
-
     kernel::println!("hello");
+
+    let fadt = unsafe { kernel::acpi::get_fadt(acpi_table_ptr) };
+    if fadt.is_none() {
+        log::warn!("FADT is not found.");
+    }
+    initialize_apic_timer(fadt);
 
     let res = pci::scan_all_bus();
     let devices = match res {
