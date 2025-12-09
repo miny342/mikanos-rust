@@ -7,8 +7,6 @@ use spin::{MutexGuard, Mutex};
 use crate::graphics::*;
 use crate::window::{Window, WindowID, WindowManager};
 
-const ROW: usize = 45;
-const COL: usize = 100;
 const MARGIN: usize = 4;
 
 #[macro_export]
@@ -47,9 +45,11 @@ impl Console {
     pub fn new(color: PixelColor, bg: PixelColor) -> WindowID {
         let (width, height) = WindowManager::resolution();
         let (id, window) = WindowManager::new_window(width, height, false, 0, 0, false);
+        let column = width / 8 - 1;
+        let row = height / 16 - 1;
         CONSOLE.try_init_once(|| Mutex::new(Console {
-            row: ROW,
-            column: COL,
+            row,
+            column,
             cursor_row: 0,
             cursor_col: 0,
             color,
