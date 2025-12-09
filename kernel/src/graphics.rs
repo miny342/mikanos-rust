@@ -202,7 +202,7 @@ impl Drop for FrameBuffer {
     }
 }
 
-fn bits_per_pixel(format: PixelFormat) -> Result<usize, ()> {
+pub fn bits_per_pixel(format: PixelFormat) -> Result<usize, ()> {
     match format {
         PixelFormat::Rgb => Ok(32),
         PixelFormat::Bgr => Ok(32),

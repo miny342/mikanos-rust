@@ -7,8 +7,6 @@
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use core::panic::PanicInfo;
-
 pub mod graphics;
 pub mod ascii;
 pub mod console;
@@ -30,6 +28,7 @@ pub mod entry;
 pub mod math;
 pub mod io_port;
 pub mod acpi;
+pub mod panic;
 
 extern crate alloc;
 
@@ -54,11 +53,7 @@ pub enum QemuExitCode {
 
 pub fn exit_qemu(exit_code: QemuExitCode) -> ! {
     unsafe {
-        core::arch::asm!(
-            "out dx, al",
-            in("dx") 0xf4u16,
-            in("eax") exit_code as u32,
-        );
+        crate::io_port::outd(0xf4, exit_code as u32);
     }
     loop {
         unsafe {
@@ -73,12 +68,6 @@ pub fn test_runner(tests: &[&dyn Testable]) {
         test.run();
     }
     exit_qemu(QemuExitCode::Success);
-}
-
-pub fn test_panic_handler(info: &PanicInfo) -> ! {
-    serial_println!("[failed]\n");
-    serial_println!("Error: {}\n", info);
-    exit_qemu(QemuExitCode::Failed);
 }
 
 #[cfg(test)]
@@ -101,6 +90,6 @@ pub extern "sysv64" fn kernel_test(_config: *const common::writer_config::FrameB
 
 #[cfg(test)]
 #[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    test_panic_handler(info);
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    crate::panic::test_panic_handler(info);
 }

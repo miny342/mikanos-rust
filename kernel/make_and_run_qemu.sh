@@ -6,7 +6,7 @@ mmd -i disk.img ::/EFI
 mmd -i disk.img ::/EFI/BOOT
 
 mcopy -i disk.img $1 ::/kernel
-mcopy -i disk.img target/mikanos-rust.efi ::/EFI/BOOT/BOOTX64.EFI
+mcopy -i disk.img target/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 
 cd ..
 ./run_qemu.sh kernel/disk.img

@@ -34,13 +34,7 @@ extern crate alloc;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    unsafe { disable_interrupt() };
-    error!("{}", info);
-    loop {
-        unsafe {
-            asm!("hlt");
-        }
-    }
+    unsafe { kernel::panic::default_panic_handler(info); }
 }
 
 async fn counter(window: alloc::sync::Arc<spin::Mutex<kernel::window::Window>>) {
@@ -81,6 +75,7 @@ kernel::entry!(kernel_main_new_stack);
 pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned, acpi_table_ptr: *const core::ffi::c_void) -> ! {
     // 初期化は割り込みなしにしておく
     unsafe { disable_interrupt() };
+    unsafe { kernel::panic::init_default_panic_print(config); }
     let framebufferconfig = unsafe { *config };
 
     kernel::logger::init_serial_and_logger();

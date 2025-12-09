@@ -32,11 +32,11 @@ fn main() {
             panic!("Building with an unknown profile: {}", profile);
         }
     };
-    
+
     env::set_current_dir(&current_dir).expect("Failed to change back to original directory");
 
     let out_dir = Path::new("target");
-    std::fs::copy(&bootloader_image_path, out_dir.join("mikanos-rust.efi")).expect("Failed to copy bootloader image");
+    std::fs::copy(&bootloader_image_path, out_dir.join("BOOTX64.EFI")).expect("Failed to copy bootloader image");
 
     // 常に実行されないと困るので
     println!("cargo:rerun-if-changed=");
