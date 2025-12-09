@@ -26,7 +26,7 @@ struct PanicWriter {
     y: usize,
 }
 
-static mut PANIC_WRITER: PanicWriter = PanicWriter { ptr: null(), x: 2, y: 2 };
+static mut PANIC_WRITER: PanicWriter = PanicWriter { ptr: null(), x: 0, y: 0 };
 
 impl Write for PanicWriter {
     fn write_str(&mut self, s: &str) -> Result<(), core::fmt::Error> {
@@ -38,13 +38,13 @@ impl Write for PanicWriter {
         for c in s.bytes() {
             if c == b'\n' {
                 self.x = 2;
-                self.y += 20;
+                self.y += 16;
                 continue;
-            } else if unsafe { (*self.ptr).horizontal_resolution < self.x + 10 } {
+            } else if unsafe { (*self.ptr).horizontal_resolution < self.x + 8 } {
                 self.x = 2;
-                self.y += 20;
+                self.y += 16;
             }
-            if unsafe { (*self.ptr).vertical_resolution < self.y + 20 } {
+            if unsafe { (*self.ptr).vertical_resolution < self.y + 16 } {
                 break;
             }
             let f = unsafe { crate::ascii::FONTS.get_unchecked(c as usize) };
@@ -60,7 +60,7 @@ impl Write for PanicWriter {
                     }
                 }
             }
-            self.x += 10;
+            self.x += 8;
         }
         Ok(())
     }

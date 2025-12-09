@@ -199,8 +199,89 @@ unsafe impl GlobalAlloc for SimplestAllocator {
     }
 }
 
+pub struct MemoryCorruptionCheckAllocator {
+    inner: Mutex<(*mut u8, *mut u8)>,
+}
+
+unsafe impl Send for MemoryCorruptionCheckAllocator {}
+unsafe impl Sync for MemoryCorruptionCheckAllocator {}
+
+impl MemoryCorruptionCheckAllocator {
+    const TOP_MARK: u8 = 0x34;
+    const BOTTOM_MARK: u8 = 0xcd;
+    pub const fn empty() -> Self {
+        MemoryCorruptionCheckAllocator {
+            inner: Mutex::new((null_mut(), null_mut()))
+        }
+    }
+    pub unsafe fn init(&self, head: *mut u8, end: *mut u8) {
+        let mut lck = self.inner.lock();
+        unsafe {
+            *head = Self::BOTTOM_MARK;
+        }
+        lck.0 = unsafe { head.byte_add(1) };
+        lck.1 = end;
+    }
+}
+
+unsafe impl GlobalAlloc for MemoryCorruptionCheckAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let size = layout.size();
+        let align = layout.align();
+        let mask = align - 1;
+
+        let mut lck = self.inner.lock();
+
+        let h = lck.0;
+        let bottom = unsafe { *h.byte_sub(1) };
+        if bottom != Self::BOTTOM_MARK {
+            panic!("allocate check failed: memory corruption {:p} {:?} expected 0x{:02x} but 0x{:02x}", h, layout, Self::BOTTOM_MARK, bottom);
+        }
+        let p = if h.addr() & mask != 0 {
+            // hとは少なくとも1byteの隙間がある
+            h.map_addr(|u| (u & !mask) + align)
+        } else {
+            // 隙間が必要なのでalignだけ先を先頭にする
+            h.map_addr(|u| u + align)
+        };
+
+        if p.addr() + size + 1 < lck.1.addr() {
+            // hからpまでをとりあえずBOTTOMで埋める
+            for ptr in h.addr()..p.addr() {
+                unsafe { *(ptr as *mut u8) = Self::BOTTOM_MARK; }
+            }
+            // pの先頭と末端をTOP, BOTTOMにする
+            unsafe {
+                *p.byte_sub(1) = Self::TOP_MARK;
+                *p.byte_add(size) = Self::BOTTOM_MARK;
+            }
+
+            lck.0 = p.map_addr(|u| u + size + 1);
+            p
+        } else {
+            null_mut()
+        }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let size = layout.size();
+        let top = unsafe { *ptr.byte_sub(1) };
+        let bottom = unsafe { *ptr.byte_add(size) };
+
+        if top != Self::TOP_MARK || bottom != Self::BOTTOM_MARK {
+            panic!("deallocate check failed: memory corruption {:p} {:?} expected 0x{:02x}, 0x{:02x} but 0x{:02x}, 0x{:02x}", ptr, layout, Self::TOP_MARK, Self::BOTTOM_MARK, top, bottom);
+        }
+
+        let mut lck = self.inner.lock();
+        if lck.0.addr() == ptr.addr() + size + 1 {
+            // free
+            // paddingは不明なため特に何もしない(BOTTOMで埋まっているはずだが、信用しない)
+            lck.0 = ptr.map_addr(|u| u - 1);
+        }
+    }
+}
+
 #[global_allocator]
-static ALLOCATOR: SimplestAllocator = SimplestAllocator::empty();
+static ALLOCATOR: MemoryCorruptionCheckAllocator = MemoryCorruptionCheckAllocator::empty();
 
 pub unsafe fn init_allocator() {
     let heap_frame = 64 * 512;
