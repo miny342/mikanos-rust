@@ -29,6 +29,7 @@ pub mod math;
 pub mod io_port;
 pub mod acpi;
 pub mod panic;
+pub mod keyboard;
 
 extern crate alloc;
 

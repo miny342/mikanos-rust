@@ -426,9 +426,5 @@ pub fn init_xhc(devices: &[Device]) -> Result<Box<XhcController>, crate::error::
     let xhc_mmio_base = xhc_bar & !0xf;
     debug!("xHC mmio_base = {:0>8x}", xhc_mmio_base);
 
-    unsafe { Ok(Box::new(XhcController::initialize(xhc_mmio_base, keyboard_handler, crate::mouse::mouse_handler))) }
-}
-
-fn keyboard_handler(_modifire: u8, _pressing: [u8; 6]) {
-
+    unsafe { Ok(Box::new(XhcController::initialize(xhc_mmio_base, crate::keyboard::keyboard_handler, crate::mouse::mouse_handler))) }
 }
