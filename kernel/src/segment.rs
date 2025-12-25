@@ -6,6 +6,9 @@ type GDTType = [SegmentDescriptor; 3];
 
 static GDT: SyncUnsafeCell<GDTType> = SyncUnsafeCell::new([SegmentDescriptor(0); 3]);
 
+pub const KERNEL_CS: u16 = 1 << 3;
+pub const KERNEL_SS: u16 = 2 << 3;
+
 #[bitfield(u64)]
 struct SegmentDescriptor {
     #[bits(16)]

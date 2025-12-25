@@ -30,6 +30,7 @@ pub mod io_port;
 pub mod acpi;
 pub mod panic;
 pub mod keyboard;
+pub mod preemptive;
 
 extern crate alloc;
 
