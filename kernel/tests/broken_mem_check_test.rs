@@ -7,7 +7,7 @@
 #![test_runner(kernel::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use core::{alloc::Layout, ffi::c_void};
+use core::{alloc::Layout};
 use core::alloc::GlobalAlloc;
 use kernel::{QemuExitCode, allocator::MemoryCorruptionCheckAllocator, entry, exit_qemu, logger::init_serial_and_logger, panic::{init_default_panic_print}, serial_println};
 
@@ -22,8 +22,8 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 static mut MEMORY: [u8; 1024] = [0; 1024];
 
-extern "sysv64" fn before_test(config: *const common::writer_config::FrameBufferConfig, _memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned, _acpi_table_ptr: *const c_void) -> ! {
-    unsafe { init_default_panic_print(config); }
+extern "sysv64" fn before_test(config: *const common::Config) -> ! {
+    unsafe { init_default_panic_print(&raw const (*config).frame_buffer_config); }
     init_serial_and_logger();
     let al = MemoryCorruptionCheckAllocator::empty();
     unsafe {

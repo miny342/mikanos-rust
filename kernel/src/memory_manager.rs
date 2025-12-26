@@ -97,8 +97,7 @@ impl BitmapMemoryManager {
     }
 }
 
-pub unsafe fn init_memory_manager(memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned) {
-    let memmap = unsafe { &*memmap_ptr };
+pub unsafe fn init_memory_manager(memmap: &uefi::mem::memory_map::MemoryMapOwned) {
     let mut memory_manager = MANAGER.lock();
     let mut available_end: usize = 0;
     for desc in memmap.entries() {

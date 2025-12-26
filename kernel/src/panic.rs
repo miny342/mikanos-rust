@@ -83,6 +83,7 @@ pub unsafe fn default_panic_print<T: Display>(val: T) {
 pub unsafe fn default_panic_handler(info: &PanicInfo) -> ! {
     unsafe {
         disable_interrupt();
+        crate::backtrace::print_backtrace();
         serial_println!("{}", info);
         default_panic_print(info);
         loop {

@@ -5,7 +5,6 @@ use elf_rs::ElfFile;
 use log::info;
 use uefi::boot::PAGE_SIZE;
 use uefi::mem::memory_map::MemoryMap;
-use uefi::mem::memory_map::MemoryMapOwned;
 use uefi::prelude::*;
 use uefi::proto::console::gop::GraphicsOutput;
 use uefi::proto::media::file::Directory;
@@ -25,7 +24,7 @@ use core::arch::asm;
 use core::ffi::c_void;
 use core::ops::Deref;
 use core::ptr::null_mut;
-use common::writer_config::*;
+use common::{Config, EntryFn, writer_config::*};
 
 #[macro_use]
 extern crate alloc;
@@ -55,7 +54,7 @@ fn write_memmap(dir: &mut Directory) -> uefi::Result {
     Ok(())
 }
 
-fn load_kernel(dir: &mut Directory) -> Option<extern "sysv64" fn(*const FrameBufferConfig, *const MemoryMapOwned, *const c_void) -> !> {
+fn load_kernel(dir: &mut Directory) -> Option<(EntryFn, usize, *const c_void, u64, *const c_void)> {
     let mut str_buf = [0; 100];
     let name = uefi::CStr16::from_str_with_buf("\\kernel", &mut str_buf).unwrap();
     let kernel_file = dir.open(name, FileMode::Read, FileAttribute::READ_ONLY).unwrap().into_type().unwrap();
@@ -142,17 +141,28 @@ fn load_kernel(dir: &mut Directory) -> Option<extern "sysv64" fn(*const FrameBuf
             }
         }
 
-        unsafe { boot::free_pool(kernel_buffer).unwrap(); }
+        let (symtab_section, symtab_num) = if let Some(s) = elf64.lookup_section(b".symtab") {
+            (kernel_buffer_slice.as_ptr().addr() as u64 + s.offset(), s.size() / s.entsize())
+        } else {
+            (0, 0)
+        };
+        let strtab_section = if let Some(s) = elf64.lookup_section(b".strtab") {
+            kernel_buffer_slice.as_ptr().addr() as u64 + s.offset()
+        } else {
+            0
+        };
+        // バックトレースの際に関数名が参照できるようにfreeしない
+        // unsafe { boot::free_pool(kernel_buffer).unwrap(); }
 
         let entry_point_address =  unsafe { *(kernel_slice.as_ptr().add(24) as *const usize) };
         let entry_point = entry_point_address + kernel_slice.as_ptr() as usize;
         info!("entry point: {:x}", entry_point);
 
         let kernel_entry = unsafe {
-            let f: extern "sysv64" fn(*const FrameBufferConfig, *const MemoryMapOwned, *const c_void) -> ! = core::mem::transmute(entry_point);
+            let f: EntryFn = core::mem::transmute(entry_point);
             f
         };
-        Some(kernel_entry)
+        Some((kernel_entry, kernel_slice.as_ptr().addr(), symtab_section as *const c_void, symtab_num, strtab_section as *const c_void))
     } else {
         None
     }
@@ -210,12 +220,20 @@ fn main() -> Status {
         },
     };
 
-    let config_ptr = boot::allocate_pool(boot::MemoryType::LOADER_DATA, size_of::<FrameBufferConfig>()).unwrap().as_ptr() as *mut FrameBufferConfig;
-    unsafe { core::ptr::copy_nonoverlapping(&raw const config, config_ptr, size_of::<FrameBufferConfig>()); }
+    let config_ptr = boot::allocate_pool(boot::MemoryType::LOADER_DATA, size_of::<Config>()).unwrap().as_ptr() as *mut Config;
+    unsafe { core::ptr::write(&raw mut (*config_ptr).frame_buffer_config, config); }
 
-    if let Some(kernel_entry) = k {
+    if let Some((kernel_entry, kernel_addr, symtab_ptr, symtab_num, strtab_ptr)) = k {
         let memmap = unsafe { boot::exit_boot_services(None) };
-        kernel_entry(config_ptr, &memmap, acpi_table_ptr);
+        unsafe {
+            core::ptr::write(&raw mut (*config_ptr).memmap, memmap);
+            core::ptr::write(&raw mut (*config_ptr).acpi_table_ptr, acpi_table_ptr);
+            core::ptr::write(&raw mut (*config_ptr).base, kernel_addr);
+            core::ptr::write(&raw mut (*config_ptr).symtab, symtab_ptr);
+            core::ptr::write(&raw mut (*config_ptr).symtab_num, symtab_num as usize);
+            core::ptr::write(&raw mut (*config_ptr).strtab, strtab_ptr);
+        }
+        kernel_entry(config_ptr);
     }
     loop {
         unsafe {

@@ -63,6 +63,7 @@ async fn counter(window: alloc::sync::Arc<spin::Mutex<kernel::window::Window>>) 
         value += 1;
         timer = Timer::new(timeout, value);
         kernel::preemptive::context::test_func();
+        panic!("test panic");
     }
 }
 
@@ -73,23 +74,25 @@ async fn counter2() {
 
 kernel::entry!(kernel_main_new_stack);
 
-pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned, acpi_table_ptr: *const core::ffi::c_void) -> ! {
+pub extern "sysv64" fn kernel_main_new_stack(config: *const common::Config) -> ! {
     // 初期化は割り込みなしにしておく
     unsafe { disable_interrupt() };
-    unsafe { kernel::panic::init_default_panic_print(config); }
-    let framebufferconfig = unsafe { *config };
+    // safety: 信頼しないと始まらない
+    let config = unsafe { &*config };
+    unsafe { kernel::panic::init_default_panic_print(&raw const config.frame_buffer_config); }
+    unsafe { kernel::backtrace::init_backtrace(config.base, config.symtab, config.symtab_num, config.strtab); }
 
     kernel::logger::init_serial_and_logger();
     log::set_max_level(log::LevelFilter::Warn);
     unsafe {
         kernel::segment::init_segment();
         kernel::paging::setup_identity_page_table();
-        kernel::memory_manager::init_memory_manager(memmap_ptr);
+        kernel::memory_manager::init_memory_manager(&config.memmap);
         kernel::allocator::init_allocator();
     }
     // initialized memory allocator
 
-    unsafe { WindowManager::new(framebufferconfig) };
+    unsafe { WindowManager::new(config.frame_buffer_config) };
 
     let mouse_id = mouse::MouseCursor::new();
     let console_id = Console::new(PixelColor { r: 255, g: 255, b: 255, a: 255}, PixelColor { r: 0, g: 0, b: 0, a: 255 });
@@ -100,7 +103,7 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const FrameBufferConfig, m
 
     kernel::println!("hello");
 
-    let fadt = unsafe { kernel::acpi::get_fadt(acpi_table_ptr) };
+    let fadt = unsafe { kernel::acpi::get_fadt(config.acpi_table_ptr) };
     if fadt.is_none() {
         log::warn!("FADT is not found.");
     }

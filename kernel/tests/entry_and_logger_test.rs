@@ -7,8 +7,6 @@
 #![test_runner(kernel::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use core::ffi::c_void;
-
 use kernel::{QemuExitCode, entry, exit_qemu};
 
 entry!(before_test);
@@ -18,7 +16,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     kernel::panic::test_panic_handler(info);
 }
 
-extern "sysv64" fn before_test(_config: *const common::writer_config::FrameBufferConfig, _memmap_ptr: *const uefi::mem::memory_map::MemoryMapOwned, _acpi_table_ptr: *const c_void) -> ! {
+extern "sysv64" fn before_test(_config: *const common::Config) -> ! {
     kernel::logger::init_serial_and_logger();
     test_main();
     exit_qemu(QemuExitCode::Failed);
