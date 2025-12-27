@@ -67,6 +67,9 @@ macro_rules! serial_println {
 
 pub fn _serial_print(args: core::fmt::Arguments) {
     if IS_USABLE.load(core::sync::atomic::Ordering::Relaxed) {
-        SERIAL.lock().write_fmt(args).unwrap();
+        let Some(mut s) = SERIAL.try_lock() else {
+            return;
+         };
+        s.write_fmt(args).unwrap();
     }
 }

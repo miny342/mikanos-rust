@@ -3,6 +3,8 @@ use alloc::{collections::BinaryHeap, sync::Arc};
 use futures_util::task::AtomicWaker;
 use spin::Mutex;
 
+use crate::preemptive::context::check_and_stop_preemptive;
+
 const COUNT_MAX: u32 = 0xffffffff;
 const LVT_TIMER: *mut u32 = 0xfee00320 as *mut u32;
 const INITIAL_COUNT: *mut u32 = 0xfee00380 as *mut u32;
@@ -177,6 +179,8 @@ pub extern "x86-interrupt" fn int_handler_lapic_timer(_frame: crate::interrupt::
     TICK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     TIMER_MANAGER_WAKER.wake();
     crate::interrupt::notify_end_of_interrupt();
+
+    unsafe { check_and_stop_preemptive(); }
 }
 
 mod test {

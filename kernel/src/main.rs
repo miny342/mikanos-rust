@@ -11,6 +11,7 @@ use core::arch::asm;
 use core::panic::PanicInfo;
 use alloc::boxed::Box;
 use alloc::format;
+use kernel::preemptive::context::PreemptiveTask;
 use kernel::serial_println;
 use kernel::timer::Timer;
 use kernel::timer::get_tick;
@@ -69,6 +70,14 @@ async fn counter(window: alloc::sync::Arc<spin::Mutex<kernel::window::Window>>) 
 async fn counter2() {
     Timer::new(600, 100).await;
     log::warn!("Timer: 600 100");
+}
+
+fn sync_counter() -> ! {
+    let mut i = 0usize;
+    loop {
+        serial_println!("i: {}", i);
+        i += 1;
+    }
 }
 
 kernel::entry!(kernel_main_new_stack);
@@ -135,5 +144,6 @@ pub extern "sysv64" fn kernel_main_new_stack(config: *const common::Config) -> !
     executor.spawn(task::Task::new(counter(main_window)));
     executor.spawn(task::Task::new(timer_manager()));
     executor.spawn(task::Task::new(counter2()));
+    executor.spawn(task::Task::new(PreemptiveTask::new(sync_counter)));
     executor.run();
 }

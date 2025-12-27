@@ -1,10 +1,44 @@
 use core::arch::naked_asm;
 use core::mem::offset_of;
+use core::ptr::null_mut;
+use core::sync::atomic::{AtomicPtr, AtomicUsize};
 
 use alloc::vec::Vec;
 
 use crate::segment::{KERNEL_CS, KERNEL_SS};
 use crate::serial_println;
+use crate::timer::get_tick;
+
+static mut KERNEL_CONTEXT: Context = Context {
+    cr3: 0,
+    rip: 0,
+    rflags: 0,
+
+    rax: 0,
+    rbx: 0,
+    rcx: 0,
+    rdx: 0,
+    rsi: 0,
+    rdi: 0,
+    rsp: 0,
+    rbp: 0,
+
+    r8: 0,
+    r9: 0,
+    r10: 0,
+    r11: 0,
+    r12: 0,
+    r13: 0,
+    r14: 0,
+    r15: 0,
+
+    cs: 0,
+    ss: 0,
+    fs: 0,
+    gs: 0,
+};
+static PREEMPTIVE_CONTEXT_ADDR: AtomicPtr<Context> = AtomicPtr::new(null_mut());
+static PREEMPTIVE_TIMER: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Default, Clone)]
 #[repr(align(16))]
@@ -115,8 +149,6 @@ unsafe extern "sysv64" fn context_get(now_ctx: &mut Context) {
         ss_addr = const ctxoft!(ss),
         fs_addr = const ctxoft!(fs),
         gs_addr = const ctxoft!(gs),
-
-
     )
 }
 
@@ -240,6 +272,54 @@ fn get_cr3() -> u64 {
         core::arch::asm!("mov {}, cr3", out(reg) v);
     }
     v
+}
+
+pub struct PreemptiveTask {
+    context: Context,
+}
+
+impl PreemptiveTask {
+    pub fn new(f: fn() -> !) -> Self {
+        let mut ctx = Context::default();
+        ctx.rip = f as *const fn() as u64;
+
+        let stack: Vec<Mem> = Vec::with_capacity(1024 * 512);
+        ctx.rsp = stack.as_ptr().addr() as u64 + size_of::<Mem>() as u64 * 1024 * 512 - 8;
+
+        ctx.cr3 = get_cr3();
+        ctx.rflags = 0x202;
+        ctx.cs = KERNEL_CS;
+        ctx.ss = KERNEL_SS;
+
+        PreemptiveTask { context: ctx }
+    }
+}
+
+impl Future for PreemptiveTask {
+    type Output = ();
+    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+        let s = self.get_mut();
+        if PREEMPTIVE_CONTEXT_ADDR.compare_exchange_weak(null_mut(), &raw mut s.context, core::sync::atomic::Ordering::Relaxed, core::sync::atomic::Ordering::Relaxed).is_err() {
+            panic!("PreemptiveTask is already running");
+        }
+        PREEMPTIVE_TIMER.store(get_tick() + 2, core::sync::atomic::Ordering::Relaxed);
+        unsafe { context_switch(&mut s.context, &mut *(&raw mut KERNEL_CONTEXT)); }
+        cx.waker().wake_by_ref(); // 常にタスクに入れておく
+        core::task::Poll::Pending
+    }
+}
+
+pub unsafe fn check_and_stop_preemptive() {
+    if PREEMPTIVE_TIMER.load(core::sync::atomic::Ordering::Relaxed) > get_tick() {
+        return;
+    }
+
+    let ptr = PREEMPTIVE_CONTEXT_ADDR.swap(null_mut(), core::sync::atomic::Ordering::Relaxed);
+    if ptr.is_null() {
+        return;
+    }
+
+    unsafe { context_switch(&mut *(&raw mut KERNEL_CONTEXT), &mut (*ptr)); }
 }
 
 // 後でマクロで対応
