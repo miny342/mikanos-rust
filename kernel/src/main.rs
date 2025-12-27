@@ -63,7 +63,6 @@ async fn counter(window: alloc::sync::Arc<spin::Mutex<kernel::window::Window>>) 
         value += 1;
         timer = Timer::new(timeout, value);
         kernel::preemptive::context::test_func();
-        panic!("test panic");
     }
 }
 
